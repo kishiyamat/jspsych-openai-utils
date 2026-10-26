@@ -1,5 +1,5 @@
 // CognitionのSource codeへ貼り付ける実験本体（jsPsych 7/8）。
-// External JS: api-key.js（window.ENCRYPTED_API_KEYを定義）。
+// External JS: encrypted-api-key.js（window.ENCRYPTED_API_KEYを定義）。
 // プラグイン: html-button-response / survey / call-function。
 // 共通JSはAI条件の認証時に取得。キー・パスワードは実験データへ記録しない。
 
@@ -13,16 +13,18 @@ const PROMPTS = {
 };
 const jsPsych = initJsPsych();
 const conditions = ["prompt_a", "prompt_b", "manual"];
-const requested = (new URLSearchParams(location.search).get("system-prompt") || "").toLowerCase();
+const requestedValue = (new URLSearchParams(location.search).get("system-prompt") || "").toLowerCase();
+const aliases = { a: "prompt_a", b: "prompt_b" };
+const requested = aliases[requestedValue] || requestedValue;
 const condition = conditions.includes(requested)
   ? requested : conditions[Math.floor(Math.random() * conditions.length)];
 const isManual = condition === "manual";
 jsPsych.data.addProperties({
-  experiment_version: "2026-10-26-v3", feedback_session_id: crypto.randomUUID(),
+  experiment_version: "2026-10-26-v4", feedback_session_id: crypto.randomUUID(),
   system_prompt_type: condition,
   system_prompt_source: conditions.includes(requested) ? "query" : "random"
 });
-let apiKey = null, userText = "", aiText = null, attempt = 0;
+let apiKey = null, submissionText = "", aiText = null, attempt = 0;
 let error = null, endReason = null;
 const canContinue = () => endReason === null;
 const needsRetry = () => error !== null && canContinue();
@@ -46,7 +48,7 @@ const authentication = {
   func: async done => {
     jsPsych.getDisplayElement().textContent = "";
     try {
-      await import(LIBRARY_URL);
+      if (!window.FeedbackUtils) await import(LIBRARY_URL);
       apiKey = await window.FeedbackUtils.getApiKey(window.ENCRYPTED_API_KEY);
     } catch {
       endReason = "authentication_error";
@@ -63,14 +65,14 @@ const input = {
   survey_json: {
     showQuestionNumbers: false, completeText: isManual ? "フィードバックを書く" : "AIに依頼する",
     elements: [{
-      type: "comment", name: "user_prompt", title: "フィードバックの対象文章",
+      type: "comment", name: "submission", title: "フィードバックの対象文章",
       placeholder: "例：企業が社債を出すコストが上がっている。国債に対する金利の上乗せ幅（スプレッド）は15年ぶりの大きさになった。",
       rows: 8, maxLength: 1000, isRequired: true, validators: [nonBlank]
     }]
   },
   on_finish: data => {
-    userText = data.response.user_prompt.trim();
-    data.user_prompt = userText;
+    submissionText = data.response.submission;
+    data.submission = submissionText;
     delete data.response;
   }
 };
@@ -85,14 +87,14 @@ const generation = {
     jsPsych.getDisplayElement().textContent = "AIがフィードバックを作成しています。";
     const record = {
       generation_attempt: attempt, system_prompt: PROMPTS[condition],
-      user_prompt: userText, api_input: userText, model: MODEL,
+      api_input: submissionText, model: MODEL,
       reasoning_effort: "none", temperature: 0.3, max_output_tokens: 1000,
       response_model: null, api_response_id: null, ai_feedback: null, api_error: null
     };
     try {
       const result = await window.FeedbackUtils.generate({
         apiKey, model: MODEL, reasoningEffort: "none", temperature: 0.3,
-        maxOutputTokens: 1000, systemPrompt: PROMPTS[condition], text: userText
+        maxOutputTokens: 1000, systemPrompt: PROMPTS[condition], text: submissionText
       });
       aiText = result.text;
       record.ai_feedback = aiText;
@@ -138,28 +140,35 @@ const submission = {
     showQuestionNumbers: false, completeText: "提出する",
     elements: [
       { type: "html", name: "reference",
-        html: `<b>${isManual ? "対象文章" : "AIの原案"}</b><div style="white-space:pre-wrap">${escapeHtml(isManual ? userText : aiText)}</div>` },
+        html: `<b>${isManual ? "対象文章" : "AIの原案"}</b><div style="white-space:pre-wrap">${escapeHtml(isManual ? submissionText : aiText)}</div>` },
+      ...(!isManual ? [{
+        type: "radiogroup", name: "adoption", title: "AIの原案をどのように扱いましたか？", isRequired: true,
+        choices: [
+          { value: "as_is", text: "そのまま採用" },
+          { value: "edited", text: "編集して採用" },
+          { value: "rejected", text: "採用しない" }
+        ]
+      }] : []),
       { type: "comment", name: "final_feedback", rows: 8,
         title: isManual ? "対象文章へのフィードバックを書いてください" : "提出するフィードバック（編集できます）",
-        description: isManual ? "" : "採用しない場合は、入力欄を空にして提出してください。",
-        defaultValue: isManual ? "" : aiText,
-        isRequired: isManual, validators: isManual ? [nonBlank] : [] }
+        description: isManual ? "" : "採用しない場合は、空欄でも自分で書いた文章でも提出できます。",
+        isRequired: isManual,
+        requiredIf: !isManual ? "{adoption} != 'rejected'" : undefined,
+        validators: [nonBlank] }
     ]
   }),
+  survey_function: survey => {
+    if (!isManual) survey.setValue("final_feedback", aiText);
+  },
   on_finish: data => {
-    const finalText = data.response.final_feedback || "";
-    data.user_prompt = userText;
+    const response = data.response;
+    const finalText = response.final_feedback ?? "";
+    data.submission = submissionText;
     data.ai_feedback = aiText;
     data.final_feedback = finalText;
     data.generation_attempt = attempt;
-    data.text_changed = null;
-    data.adoption = null;
-    if (!isManual) {
-      data.text_changed = finalText !== aiText;
-      if (!finalText.trim()) data.adoption = "not_adopted";
-      else if (data.text_changed) data.adoption = "edited";
-      else data.adoption = "as_is";
-    }
+    data.text_changed = isManual ? null : finalText !== aiText;
+    data.adoption = isManual ? null : response.adoption;
     delete data.response;
   }
 };
@@ -191,3 +200,4 @@ jsPsych.run([
   apiKey = null;
   jsPsych.getDisplayElement().textContent = "実験を継続できませんでした。実験者にお知らせください。";
 });
+
