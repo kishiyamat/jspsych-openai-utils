@@ -36,6 +36,12 @@ console.log(result.text); // result.model, result.responseId are also available
 
 For models supporting explicit reasoning effort, `reasoningEffort` can be passed. Set `temperature` **only** if the selected model supports it; this helper does not assume all models share identical parameters.
 
+### Cognition sample
+
+Paste `experiment.js` into Cognition Source code and enable the `html-button-response`, `survey`, and `call-function` plugins. Add `encrypted-api-key.js` as an External JS file; it defines `window.ENCRYPTED_API_KEY`. The sample has `prompt_a`, `prompt_b`, and `manual` conditions. `?system-prompt=A` or `B` selects the matching AI condition; if the parameter is missing or invalid, the sample chooses randomly among all three. The shared library may be loaded as an External JS file before the experiment, or the sample imports its pinned URL when an AI condition reaches authentication.
+
+The participant enters only the target submission text. Condition-specific instructions are defined in `PROMPTS`; this sample does not ask for a separate user instruction. It keeps the exact submitted text in `submission` and the generation row's `api_input` contains the exact text sent to the API. `adoption` records the participant's choice (`as_is`, `edited`, or `rejected`), while `text_changed` independently records whether the final text differs from the AI draft.
+
 ### Encryption
 
 `getApiKey(encrypted)` accepts an object containing `salt`, `iv`, `ciphertext`, and `iterations`, from a PBKDF2-SHA256 / AES-256-GCM encryption workflow. It prompts for the password and returns the decrypted API key. `decryptApiKey(encrypted, password)` is also exposed for automated tests.
