@@ -1,7 +1,7 @@
 // CognitionのSource codeへ貼り付ける実験本体（jsPsych 7/8）。
-// External JS: encrypted-api-key.js（window.ENCRYPTED_API_KEYを定義）。
-// プラグイン: html-button-response / survey / call-function。
-// External JS: feedback-utils.js を先に読み込む。キー・パスワードは実験データへ記録しない。
+// 共通utilは事前読込。人手条件では認証・生成を呼ばない。
+// AI条件ではencrypted-api-key.js（window.ENCRYPTED_API_KEY）も必要。
+// プラグイン: html-button-response / survey / call-function。キー・パスワードは実験データへ記録しない。
 
 // ===== 1. 実験設定 =====
 const MODEL = "gpt-6-luna";
@@ -19,7 +19,7 @@ const condition = conditions.includes(requested)
   ? requested : conditions[Math.floor(Math.random() * conditions.length)];
 const isManual = condition === "manual";
 jsPsych.data.addProperties({
-  experiment_version: "2026-10-27-v5", feedback_session_id: crypto.randomUUID(),
+  experiment_version: "2026-10-27-v6", feedback_session_id: crypto.randomUUID(),
   system_prompt_type: condition,
   system_prompt_source: conditions.includes(requested) ? "query" : "random"
 });
@@ -27,26 +27,62 @@ let submissionText = "", endReason = null;
 const canContinue = () => endReason === null;
 const nonBlank = { type: "regex", regex: "\\S", text: "空白以外の文字を入力してください。" };
 const escapeHtml = text => String(text ?? "").replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`);
-const authentication = window.FeedbackUtils.createAuthenticationTrial({
-  jsPsych,
-  encryptedApiKey: window.ENCRYPTED_API_KEY,
-  onError: () => { endReason = "authentication_error"; }
-});
-const generation = window.FeedbackUtils.createGenerationTrial({
-  jsPsych,
-  getApiKey: authentication.getApiKey,
-  getSystemPrompt: () => PROMPTS[condition],
-  getInput: () => submissionText,
-  model: MODEL,
-  reasoningEffort: "none",
-  temperature: 0.3,
-  maxOutputTokens: 1000,
-  maxAttempts: MAX_ATTEMPTS,
-  onStart: () => { jsPsych.getDisplayElement().textContent = "AIがフィードバックを作成しています。"; },
-  onStop: reason => { endReason = reason; }
-});
-const needsRetry = () => generation.getError() !== null && canContinue();
-
+// LLM認証: 人手条件ではclientを作らず、helper/keyなしで実行できる。
+const llmClient = isManual ? null : window.FeedbackUtils.createClient(window.ENCRYPTED_API_KEY);
+const authentication = {
+  type: jsPsychCallFunction, async: true, data: { feedback_phase: "authentication" },
+  func: async done => {
+    jsPsych.getDisplayElement().textContent = "";
+    try {
+      await llmClient.authenticate();
+    } catch {
+      endReason = "authentication_error";
+    }
+    done();
+  },
+  on_finish: data => {
+    data.authentication_succeeded = llmClient.isAuthenticated();
+    delete data.value;
+  }
+};
+let attempt = 0, error = null, aiText = null;
+const needsRetry = () => error !== null && canContinue();
+// LLM生成: 研究側のtrialがLLM clientを呼び、保存列を明示的に組み立てる。
+const generation = {
+  type: jsPsychCallFunction, async: true, data: { feedback_phase: "generation" },
+  func: async done => {
+    attempt += 1;
+    error = null;
+    aiText = null;
+    jsPsych.getDisplayElement().textContent = "AIがフィードバックを作成しています。";
+    const record = {
+      generation_attempt: attempt, system_prompt: PROMPTS[condition],
+      api_input: submissionText, model: MODEL,
+      reasoning_effort: "none", temperature: 0.3, max_output_tokens: 1000,
+      response_model: null, api_response_id: null, ai_feedback: null, api_error: null
+    };
+    try {
+      const result = await llmClient.generate({
+        model: MODEL, reasoningEffort: "none", temperature: 0.3,
+        maxOutputTokens: 1000, systemPrompt: PROMPTS[condition], text: submissionText
+      });
+      aiText = result.text;
+      record.ai_feedback = aiText;
+      record.response_model = result.model;
+      record.api_response_id = result.responseId;
+    } catch (failure) {
+      error = window.FeedbackUtils.classifyError(failure);
+      record.api_error = error;
+      if (!error.retryable) endReason = "non_retryable_error";
+      else if (attempt >= MAX_ATTEMPTS) endReason = "max_attempts_reached";
+    }
+    done(record);
+  },
+  on_finish: data => {
+    Object.assign(data, data.value);
+    delete data.value;
+  }
+};
 // ===== 2. 同意・認証・対象文章 =====
 const consent = {
   type: jsPsychHtmlButtonResponse, data: { feedback_phase: "consent" },
@@ -82,13 +118,13 @@ const retry = {
   stimulus: "<p>AIの応答を取得できませんでした。再試行しますか？</p>",
   choices: ["再試行", "終了"],
   on_finish: data => {
-    data.generation_attempt = generation.getAttempt();
+    data.generation_attempt = attempt;
     data.retry_choice = data.response === 0 ? "retry" : "end";
     if (data.response === 1) endReason = "participant_ended_after_error";
   }
 };
 const generationLoop = {
-  timeline: [generation.trial, { timeline: [retry], conditional_function: needsRetry }],
+  timeline: [generation, { timeline: [retry], conditional_function: needsRetry }],
   conditional_function: () => !isManual, loop_function: needsRetry
 };
 
@@ -99,7 +135,7 @@ const submission = {
     showQuestionNumbers: false, completeText: "提出する",
     elements: [
       { type: "html", name: "reference",
-        html: `<b>${isManual ? "対象文章" : "AIの原案"}</b><div style="white-space:pre-wrap">${escapeHtml(isManual ? submissionText : generation.getFeedback())}</div>` },
+        html: `<b>${isManual ? "対象文章" : "AIの原案"}</b><div style="white-space:pre-wrap">${escapeHtml(isManual ? submissionText : aiText)}</div>` },
       ...(!isManual ? [{
         type: "radiogroup", name: "adoption", title: "AIの原案をどのように扱いましたか？", isRequired: true,
         choices: [
@@ -117,16 +153,16 @@ const submission = {
     ]
   }),
   survey_function: survey => {
-    if (!isManual) survey.setValue("final_feedback", generation.getFeedback());
+    if (!isManual) survey.setValue("final_feedback", aiText);
   },
   on_finish: data => {
     const response = data.response;
     const finalText = response.final_feedback ?? "";
     data.submission = submissionText;
-    data.ai_feedback = generation.getFeedback();
+    data.ai_feedback = aiText;
     data.final_feedback = finalText;
-    data.generation_attempt = generation.getAttempt();
-    data.text_changed = isManual ? null : finalText !== generation.getFeedback();
+    data.generation_attempt = attempt;
+    data.text_changed = isManual ? null : finalText !== aiText;
     data.adoption = isManual ? null : response.adoption;
     delete data.response;
   }
@@ -142,21 +178,22 @@ const finish = {
   on_finish: data => {
     data.feedback_phase = endReason === null ? "complete" : "termination";
     data.termination_reason = endReason;
-    data.generation_attempt = generation.getAttempt();
-    authentication.clearApiKey();
+    data.generation_attempt = attempt;
+    // LLMキー解放: 終了時にclientのclosureを消去する。
+    llmClient?.clear();
   }
 };
 
 // ===== 5. 実行順序（データの回収はCognition側で確認する） =====
 jsPsych.run([
   consent,
-  { timeline: [authentication.trial], conditional_function: () => !isManual && canContinue() },
+  { timeline: [authentication], conditional_function: () => !isManual && canContinue() },
   { timeline: [input, generationLoop,
       { timeline: [submission], conditional_function: canContinue }],
     conditional_function: canContinue },
   finish
 ]).catch(() => {
-  authentication.clearApiKey();
+  llmClient?.clear();
   jsPsych.getDisplayElement().textContent = "実験を継続できませんでした。実験者にお知らせください。";
 });
 

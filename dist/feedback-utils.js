@@ -112,7 +112,46 @@ async function getApiKey(encrypted) {
   }
 }
 
-// Shared jsPsych trial factories. Study-specific conditions and screens stay in the experiment.
+/**
+ * Create an LLM client that keeps a decrypted key in a private closure.
+ * This API is independent of jsPsych and returns no key value.
+ * @param {object} encryptedApiKey
+ * @returns {{authenticate: Function, generate: Function, clear: Function, isAuthenticated: Function}}
+ */
+function createClient(encryptedApiKey) {
+  let apiKey = null;
+  return {
+    async authenticate() {
+      apiKey = await getApiKey(encryptedApiKey);
+      return true;
+    },
+    generate(options) {
+      if (apiKey === null) throw new Error("Client is not authenticated");
+      return generate({ ...options, apiKey });
+    },
+    clear() {
+      apiKey = null;
+    },
+    isAuthenticated() {
+      return apiKey !== null;
+    }
+  };
+}
+
+/** Convert an API failure to safe status fields for study data. */
+function classifyError(failure) {
+  const retryable = failure.message === "OpenAI network error or timeout"
+    || (failure.status === 429 && failure.code !== "insufficient_quota")
+    || failure.status >= 500 || failure.name === "SyntaxError";
+  const knownCodes = ["insufficient_quota", "invalid_api_key", "model_not_found"];
+  return {
+    http_status: failure.status ?? null,
+    retryable,
+    code: knownCodes.includes(failure.code) ? failure.code : "generation_failed"
+  };
+}
+
+// Optional legacy jsPsych adapters. New experiments may keep all trial logic locally.
 /**
  * Create a jsPsych authentication trial.
  * @param {{jsPsych: object, encryptedApiKey: object, onError?: Function}} options
@@ -208,17 +247,9 @@ function createGenerationTrial({
         record.response_model = result.model;
         record.api_response_id = result.responseId;
       } catch (failure) {
-        const retryable = failure.message === "OpenAI network error or timeout"
-          || (failure.status === 429 && failure.code !== "insufficient_quota")
-          || failure.status >= 500 || failure.name === "SyntaxError";
-        const knownCodes = ["insufficient_quota", "invalid_api_key", "model_not_found"];
-        error = {
-          http_status: failure.status ?? null,
-          retryable,
-          code: knownCodes.includes(failure.code) ? failure.code : "generation_failed"
-        };
+        error = classifyError(failure);
         record.api_error = error;
-        if (!retryable) onStop("non_retryable_error");
+        if (!error.retryable) onStop("non_retryable_error");
         else if (attempt >= maxAttempts) onStop("max_attempts_reached");
       }
       done(record);
@@ -235,5 +266,5 @@ function createGenerationTrial({
     getFeedback: () => feedback
   };
 }
-window.FeedbackUtils = Object.freeze({ getApiKey, generate, decryptApiKey, createAuthenticationTrial, createGenerationTrial });
+window.FeedbackUtils = Object.freeze({ getApiKey, generate, decryptApiKey, createClient, classifyError, createAuthenticationTrial, createGenerationTrial });
 })();

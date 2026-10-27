@@ -10,6 +10,8 @@ A tiny browser-side helper for jsPsych experiments using OpenAI's Responses API.
 - `src/crypto.js`: password-based decryption (PBKDF2-SHA256 / AES-256-GCM)
 - `src/openai.js`: Responses API call
 - `src/feedback.js`: password form
+- `src/client.js`: jsPsych-independent authenticated LLM client and safe error classification
+- `src/jspsych.js`: optional legacy jsPsych trial adapters
 - `example.html`: minimal usage sample
 
 ## Quick start
@@ -21,24 +23,30 @@ Load the pinned version of the bundle **before** your experiment code:
 <script src="./experiment.js"></script>
 ```
 
-In your experiment code, define `ENCRYPTED_API_KEY` locally (never in this repository):
+Keep `ENCRYPTED_API_KEY` in a local `encrypted-api-key.js` file (never in this repository), then use the client:
 
 ```js
-const apiKey = await FeedbackUtils.getApiKey(ENCRYPTED_API_KEY);
-const result = await FeedbackUtils.generate({
-  apiKey,
-  model: "gpt-5-mini",
-  systemPrompt: "日本語で短く改善案を提示してください。",
-  text: "ここに対象文章を渡す",
-});
-console.log(result.text); // result.model, result.responseId are also available
+const client = FeedbackUtils.createClient(ENCRYPTED_API_KEY);
+try {
+  await client.authenticate();
+  const result = await client.generate({
+    model: "gpt-5-mini",
+    systemPrompt: "日本語で短く改善案を提示してください。",
+    text: "ここに対象文章を渡す",
+  });
+  console.log(result.text); // result.model, result.responseId are also available
+} finally {
+  client.clear();
+}
 ```
 
 For models supporting explicit reasoning effort, `reasoningEffort` can be passed. Set `temperature` **only** if the selected model supports it; this helper does not assume all models share identical parameters.
 
 ### Cognition sample
 
-Paste `experiment.js` into Cognition Source code and enable the `html-button-response`, `survey`, and `call-function` plugins. Add these External JS files in order: `feedback-utils.js`, then `encrypted-api-key.js` (which defines `window.ENCRYPTED_API_KEY`), then the experiment Source code. The sample has `prompt_a`, `prompt_b`, and `manual` conditions. `?system-prompt=A` or `B` selects the matching AI condition; if the parameter is missing or invalid, the sample chooses randomly among all three. The shared library provides the common authentication and generation jsPsych trials; the experiment code keeps the study conditions, prompts, and screens.
+Paste `experiment.js` into Cognition Source code and enable the `html-button-response`, `survey`, and `call-function` plugins. Study conditions, prompts, screens, retry decisions, and saved trial fields stay in the experiment code. The shared library supplies password-based key handling and OpenAI requests; study-specific jsPsych trials remain in the experiment code.
+
+The sample has `prompt_a`, `prompt_b`, and `manual` conditions. `?system-prompt=A` or `B` selects the matching AI condition; if the parameter is missing or invalid, the sample chooses randomly among all three. Load `feedback-utils.js` as an External JS file before the experiment Source code. For AI conditions, also load `encrypted-api-key.js` (which defines `window.ENCRYPTED_API_KEY`) before the experiment code. Use `?system-prompt=manual` to run the manual condition without a key or API request; the shared library remains loaded because the experiment includes the AI path. The experiment creates a client, authenticates when that condition reaches its authentication trial, and calls it from its own generation trial. The client API is jsPsych-independent; `authenticate()` keeps the decrypted key privately, `generate()` sends a request without returning the key, and `clear()` drops it. Existing `getApiKey`, `generate`, `decryptApiKey`, and legacy jsPsych trial adapters remain available for compatibility.
 
 The participant enters only the target submission text. Condition-specific instructions are defined in `PROMPTS`; this sample does not ask for a separate user instruction. It keeps the exact submitted text in `submission` and the generation row's `api_input` contains the exact text sent to the API. `adoption` records the participant's choice (`as_is`, `edited`, or `rejected`), while `text_changed` independently records whether the final text differs from the AI draft.
 
