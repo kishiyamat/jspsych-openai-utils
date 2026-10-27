@@ -1,11 +1,12 @@
 // CognitionのSource codeへ貼り付ける実験本体（jsPsych 7/8）。
-// 共通utilは事前読込。人手条件では認証・生成を呼ばない。
+// 共通utilはAI認証時に読み込む。人手条件では認証・生成を呼ばない。
 // AI条件ではencrypted-api-key.js（window.ENCRYPTED_API_KEY）も必要。
 // プラグイン: html-button-response / survey / call-function。キー・パスワードは実験データへ記録しない。
 
 // ===== 1. 実験設定 =====
 const MODEL = "gpt-6-luna";
 const MAX_ATTEMPTS = 3;
+const LIBRARY_URL = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@52cecba5904b1282c0de0489afa9314d93be2243/dist/feedback-utils.js";
 const PROMPTS = {
   prompt_a: "あなたは文章改善を支援するAIです。対象文章の改善点と具体的な改善案（書き換え例を含む）を直接示してください。日本語で簡潔に。",
   prompt_b: "あなたは文章改善を支援するAIです。答えを直接示さず、本人が自分で改善できるよう、問い返しを中心にフィードバックしてください。書き換え例は示さないでください。日本語で簡潔に。"
@@ -19,7 +20,7 @@ const condition = conditions.includes(requested)
   ? requested : conditions[Math.floor(Math.random() * conditions.length)];
 const isManual = condition === "manual";
 jsPsych.data.addProperties({
-  experiment_version: "2026-10-27-v6", feedback_session_id: crypto.randomUUID(),
+  experiment_version: "2026-10-27-v7", feedback_session_id: crypto.randomUUID(),
   system_prompt_type: condition,
   system_prompt_source: conditions.includes(requested) ? "query" : "random"
 });
@@ -27,13 +28,16 @@ let submissionText = "", endReason = null;
 const canContinue = () => endReason === null;
 const nonBlank = { type: "regex", regex: "\\S", text: "空白以外の文字を入力してください。" };
 const escapeHtml = text => String(text ?? "").replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`);
-// LLM認証: 人手条件ではclientを作らず、helper/keyなしで実行できる。
-const llmClient = isManual ? null : window.FeedbackUtils.createClient(window.ENCRYPTED_API_KEY);
+// LLM認証: AI条件でのみhelperを読み込み、clientを作って認証する。
+let llmClient = null;
 const authentication = {
   type: jsPsychCallFunction, async: true, data: { feedback_phase: "authentication" },
   func: async done => {
-    jsPsych.getDisplayElement().textContent = "";
+    jsPsych.getDisplayElement().textContent = "実験を準備しています。";
     try {
+      if (!window.FeedbackUtils?.createClient) await import(LIBRARY_URL);
+      llmClient = window.FeedbackUtils.createClient(window.ENCRYPTED_API_KEY);
+      jsPsych.getDisplayElement().textContent = "";
       await llmClient.authenticate();
     } catch {
       endReason = "authentication_error";
@@ -41,7 +45,7 @@ const authentication = {
     done();
   },
   on_finish: data => {
-    data.authentication_succeeded = llmClient.isAuthenticated();
+    data.authentication_succeeded = Boolean(llmClient?.isAuthenticated());
     delete data.value;
   }
 };
