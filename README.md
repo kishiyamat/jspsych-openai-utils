@@ -1,83 +1,59 @@
 # jspsych-openai-utils
 
-A small browser-side library for using OpenAI's Responses API from a jsPsych experiment.
+A small browser-side utility for decrypting an encrypted API key and sending a request to OpenAI's Responses API. It does not define jsPsych trials, participant screens, retry decisions, or study data.
 
-**Public source only.** Never commit a real API key, encrypted experiment key, password, participant responses, or research-specific prompts.
+Never commit a real API key, encrypted experiment key, password, participant responses, or research-specific prompts.
 
 ## Files
 
-- `dist/feedback-utils.js`: browser bundle, generated from `src/`
-- `dist/feedback-runner.js`: small ES module that provides shared LLM preparation/authentication/generation trials and loads its sibling helper bundle
-- `src/crypto.js`: password-based decryption (PBKDF2-SHA256 / AES-256-GCM)
-- `src/openai.js`: Responses API request and response handling
-- `src/feedback.js`: password form
-- `src/client.js`: jsPsych-independent client and safe API-error classification
-- `src/forms.js`: HTML escaping and nonblank form validation
-- `src/session.js`: one fixed study request, authentication, retry attempt, and safe generation rows
-- `src/runner.js`: shared preparation/authentication/generation trials for the LLM flow
-- `scripts/build-dist.js`: rebuilds the bundle from the source files
-- `example.html`: small client usage example
+- `src/crypto.js`: PBKDF2-SHA256 / AES-256-GCM decryption
+- `src/openai.js`: Responses API request and safe error classification
+- `dist/feedback-utils.js`: browser bundle generated from those two source files
+- `experiment.js`: a small Cognition example using ordinary jsPsych trials and a visible timeline
+- `example.html`: minimal utility usage example
+- `scripts/build-dist.js`: rebuilds the browser bundle
 
-## Quick start
+## Cognition example
 
-Load the pinned bundle before the experiment code:
+Paste `experiment.js` into Cognition's Source code. It uses the standard `html-button-response`, `survey`, and `call-function` plugins. For the survey plugin, register the JavaScript file `https://unpkg.com/@jspsych/plugin-survey@1.0.1` as an External JS file and register its stylesheet `https://unpkg.com/@jspsych/plugin-survey@1.0.1/css/survey.css` as External CSS. Do not also enable the survey plugin selector, which would load it twice. The other two plugins can be enabled with their usual selectors. Register `encrypted-api-key.js` as External JS; it defines `window.ENCRYPTED_API_KEY`.
 
-```html
-<script src="https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@89216cf194ecca27c7e3022a56ed0109e63582cb/dist/feedback-utils.js"></script>
-<script src="./experiment.js"></script>
-```
+The example imports this utility bundle from its pinned URL before the consent screen. Declining consent skips password entry, decryption, and OpenAI requests. Conditions are `prompt_a`, `prompt_b`, and `manual`; `?system-prompt=A` or `B` selects the matching AI condition, while a missing or invalid value selects randomly among all three. Manual participants use the same standard survey screens but do not enter a password or call the API.
 
-Keep `ENCRYPTED_API_KEY` in a separate `encrypted-api-key.js` file. In an AI condition, create and use a client:
+Study conditions, prompts, participant screens, timeline, retry choice, and research fields remain visible in `experiment.js`. This library only decrypts the key, sends the Responses API request, and returns a safe error summary. Cognition's jsPsych integration saves each trial. Actual task registration and data saving in Cognition have not been verified for this example.
+
+## Utility API
+
+The browser bundle exposes `decryptApiKey`, `generate`, and `classifyError` through `window.FeedbackUtils`.
 
 ```js
-const client = FeedbackUtils.createClient(ENCRYPTED_API_KEY);
+let apiKey = await FeedbackUtils.decryptApiKey(window.ENCRYPTED_API_KEY, password);
 try {
-  await client.authenticate();
-  const result = await client.generate({
+  const result = await FeedbackUtils.generate({
+    apiKey,
     model: "gpt-6-luna",
     reasoningEffort: "none",
     temperature: 0.3,
-    systemPrompt: "日本語で短く改善案を提示してください。",
-    text: "ここに対象文章を渡す",
+    maxOutputTokens: 1000,
+    systemPrompt: "日本語で簡潔に改善案を提示してください。",
+    text: "ここに対象文章を渡す"
   });
-  console.log(result.text);
+  // Use result.text in the experiment's own trial.
 } finally {
-  client.clear();
+  apiKey = null;
 }
 ```
 
-The model and generation settings must be supported together by the selected model. Keep the model and settings used for each study in its experiment code and record them with the data.
+The code that collects a password and deletes it from trial data belongs to the experiment. Never put the password or decrypted API key into trial data, browser storage, or logs. Keep the submitted text unchanged when sending it. The model and generation settings must be supported together by the selected model.
 
-### Cognition sample
+The utility does not save experiment responses. Use jsPsych data collection/export as appropriate. Client-side encryption does not hide a decrypted API key from participants who can inspect their browser or network requests; use a dedicated key for a controlled study and disable it after the study.
 
-Paste `experiment.js` into Cognition's Source code and enable `html-button-response`, `survey-html-form`, and `call-function`. The sample uses the standard `survey-html-form` plugin for participant input and submission. Study conditions, prompts, screens, retry decisions, adoption choices, saved study fields, and their order stay visible in the experiment code. The shared flow supplies standard preparation, authentication, and generation trials; the session handles key authentication, one frozen request across manual retries, and safe authentication/generation rows.
-
-The sample has `prompt_a`, `prompt_b`, and `manual` conditions. `?system-prompt=A` or `B` selects the matching AI condition; if the parameter is missing or invalid, the sample chooses randomly among all three. `RUNNER_URL` is the single pinned entry URL; it loads its sibling `feedback-utils.js` from the same release, so the experiment does not need a second library URL. Before consent, the browser downloads the runner module. After consent, a preparation trial loads the core bundle and records whether it is ready. Register only `encrypted-api-key.js` (which defines `window.ENCRYPTED_API_KEY`) as an External JS file. The experiment itself calls `initJsPsych()`, declares its ordinary trials and `const timeline = [...]`, then calls `jsPsych.run(timeline)`. The manual condition loads the helper but skips authentication and generation; declining consent skips core-helper loading, authentication, and generation. If the runner module itself cannot be downloaded, the experiment shows a fixed error before jsPsych starts, so there is no trial row to save.
-
-The visible timeline is consent → helper preparation → (AI authentication when needed) → input → (generation and retry loop for AI conditions) → submission → finish. A helper-load error is recorded in the preparation row and skips authentication and task trials.
-
-The participant enters only the target submission text. Condition-specific instructions are in `PROMPTS`; this sample does not request a separate user instruction. It preserves the submitted string in `submission` and the exact API text in `api_input`. `adoption` records the participant's choice (`as_is`, `edited`, or `rejected`); `text_changed` independently records whether the final text differs from the AI draft.
-
-The current bundle no longer exports the optional jsPsych trial factories. Existing experiments that use `createAuthenticationTrial` or `createGenerationTrial` should continue using the older bundle pinned at `52cecba5904b1282c0de0489afa9314d93be2243`. The `getApiKey`, `generate`, and `decryptApiKey` functions remain available for existing callers.
-
-### Encryption
-
-`getApiKey(encrypted)` asks for the password and decrypts an object containing `salt`, `iv`, `ciphertext`, and `iterations`, using PBKDF2-SHA256 and AES-256-GCM. `decryptApiKey(encrypted, password)` is also available for automated tests.
-
-### Security
-
-Client-side encryption does not hide a decrypted API key from participants who can inspect their browser or network requests. Use a dedicated key with appropriate usage limits and revoke it after a controlled study. A server-side proxy is needed if the key must remain confidential from participants.
-
-### Data collection
-
-The library does not save experiment responses. Use jsPsych data collection/export as appropriate, and never put API keys or passwords in trial data.
+Older releases included optional jsPsych trial factories and a client/session layer. Those APIs are not in the current bundle; an existing experiment that uses them can continue to use its previously pinned immutable release.
 
 ## Local checks
 
 ```sh
 node tests/classify-error.test.js
-node tests/forms.test.js
-node tests/feedback-session.test.js
+node tests/crypto.test.js
+node tests/openai.test.js
 node tests/dist-build.test.js
-node tests/runner.test.js
 ```

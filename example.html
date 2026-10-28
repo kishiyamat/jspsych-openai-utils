@@ -1,15 +1,32 @@
 <!doctype html>
-<html lang="ja"><meta charset="UTF-8">
-<title>FeedbackUtils example</title>
+<html lang="ja">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jspsych-openai-utils usage example</title>
 <body>
-<p>実験本体では、暗号化済みキーをローカルのJSで定義してください。</p>
 <script src="./dist/feedback-utils.js"></script>
-<script>
-// In a real experiment, import your encrypted key separately.
-// const apiKey = await FeedbackUtils.getApiKey(ENCRYPTED_API_KEY);
-// const result = await FeedbackUtils.generate({
-//   apiKey, systemPrompt: "日本語で簡潔に答えてください", text: "対象文章"
-// });
-// console.log(result.text);
-</script>
-</body></html>
+<h1>Utility usage</h1>
+<p>This file shows the utility calls only. The participant screens, consent, and trial data belong in the experiment.</p>
+<pre><code>async function generateForOneTrial(passwordFromTheSurveyResponse, rawSubmission) {
+  let apiKey = await FeedbackUtils.decryptApiKey(
+    window.ENCRYPTED_API_KEY,
+    passwordFromTheSurveyResponse
+  );
+  try {
+    const result = await FeedbackUtils.generate({
+      apiKey,
+      model: "gpt-6-luna",
+      reasoningEffort: "none",
+      temperature: 0.3,
+      maxOutputTokens: 1000,
+      systemPrompt: "Study-specific instruction",
+      text: rawSubmission
+    });
+    // Record result.text in the generation trial.
+  } finally {
+    apiKey = null;
+  }
+}</code></pre>
+<p>Do not store password or apiKey in trial data, browser storage, or logs. See <a href="README.md">README.md</a> for the Cognition plugin and stylesheet requirements.</p>
+</body>
+</html>
