@@ -12,6 +12,7 @@ A small browser-side library for using OpenAI's Responses API from a jsPsych exp
 - `src/feedback.js`: password form
 - `src/client.js`: jsPsych-independent client and safe API-error classification
 - `src/forms.js`: HTML escaping and nonblank form validation
+- `src/session.js`: one fixed study request, authentication, retry attempt, and safe generation rows
 - `scripts/build-dist.js`: rebuilds the bundle from the source files
 - `example.html`: small client usage example
 
@@ -20,7 +21,7 @@ A small browser-side library for using OpenAI's Responses API from a jsPsych exp
 Load the pinned bundle before the experiment code:
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@baa5b27f6750abde0afc7dcf4afe28c2f7c4ff63/dist/feedback-utils.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@6bfae05a40333d587481c95f8163d372d1f067b0/dist/feedback-utils.js"></script>
 <script src="./experiment.js"></script>
 ```
 
@@ -47,7 +48,7 @@ The model and generation settings must be supported together by the selected mod
 
 ### Cognition sample
 
-Paste `experiment.js` into Cognition's Source code and enable `html-button-response`, `survey-html-form`, and `call-function`. The sample uses the standard `survey-html-form` plugin for participant input and submission. Study conditions, prompts, screens, retry decisions, and saved trial fields stay in the experiment code; this library handles key decryption, the OpenAI request, and safe error classification.
+Paste `experiment.js` into Cognition's Source code and enable `html-button-response`, `survey-html-form`, and `call-function`. The sample uses the standard `survey-html-form` plugin for participant input and submission. Study conditions, prompts, screens, retry decisions, adoption choices, and saved study fields stay in the experiment code. `createFeedbackSession` keeps the authenticated client private and handles authentication, one frozen request across manual retries, and safe authentication/generation rows.
 
 The sample has `prompt_a`, `prompt_b`, and `manual` conditions. `?system-prompt=A` or `B` selects the matching AI condition; if the parameter is missing or invalid, the sample chooses randomly among all three. After consent, a preparation trial ensures the pinned `feedback-utils.js` bundle is loaded (importing it only if needed) and records whether it is ready. Register only `encrypted-api-key.js` (which defines `window.ENCRYPTED_API_KEY`) as an External JS file. The manual condition also loads the helper but skips authentication and generation; declining consent skips the preparation trial.
 
@@ -74,5 +75,6 @@ The library does not save experiment responses. Use jsPsych data collection/expo
 ```sh
 node tests/classify-error.test.js
 node tests/forms.test.js
+node tests/feedback-session.test.js
 node tests/dist-build.test.js
 ```

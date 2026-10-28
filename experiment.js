@@ -11,7 +11,7 @@ const GENERATION_SETTINGS = Object.freeze({
 });
 const MAX_ATTEMPTS = 3;
 // 実験中に同じ共通処理を使えるよう、検証した版を固定します。
-const LIBRARY_URL = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@baa5b27f6750abde0afc7dcf4afe28c2f7c4ff63/dist/feedback-utils.js";
+const LIBRARY_URL = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@6bfae05a40333d587481c95f8163d372d1f067b0/dist/feedback-utils.js";
 const PROMPTS = {
   prompt_a: "あなたは文章改善を支援するAIです。対象文章の改善点と具体的な改善案（書き換え例を含む）を直接示してください。日本語で簡潔に。",
   prompt_b: "あなたは文章改善を支援するAIです。答えを直接示さず、本人が自分で改善できるよう、問い返しを中心にフィードバックしてください。書き換え例は示さないでください。日本語で簡潔に。"
@@ -27,16 +27,16 @@ const condition = conditionSource === "query"
   ? requested : jsPsych.randomization.sampleWithoutReplacement(conditions, 1)[0];
 const isManual = condition === "manual";
 jsPsych.data.addProperties({
-  experiment_version: "2026-10-28-v9",
+  experiment_version: "2026-10-28-v10",
   feedback_session_id: crypto.randomUUID(),
   system_prompt_type: condition,
   system_prompt_source: conditionSource
 });
 
-let llmClient = null, submissionText = "", aiText = null;
-let attempt = 0, error = null, endReason = null;
-const canContinue = () => endReason === null;
-const needsRetry = () => error !== null && canContinue();
+let llmSession = null, submissionText = "", endReason = null;
+const terminationReason = () => endReason ?? llmSession?.terminationReason ?? null;
+const canContinue = () => terminationReason() === null;
+const needsRetry = () => llmSession?.canRetry === true && canContinue();
 
 // ===== 2. 説明と同意 =====
 const consent = {
@@ -58,14 +58,21 @@ const loadHelpers = {
     let loaded = false;
     jsPsych.getDisplayElement().textContent = "実験を準備しています。";
     try {
-      if (!window.FeedbackUtils?.createClient || !window.FeedbackUtils?.bindNonBlankText
-          || !window.FeedbackUtils?.escapeHtml || !window.FeedbackUtils?.classifyError) {
+      if (!window.FeedbackUtils?.createFeedbackSession || !window.FeedbackUtils?.bindNonBlankText
+          || !window.FeedbackUtils?.escapeHtml) {
         await import(LIBRARY_URL);
       }
-      if (!window.FeedbackUtils?.createClient || !window.FeedbackUtils?.bindNonBlankText
-          || !window.FeedbackUtils?.escapeHtml || !window.FeedbackUtils?.classifyError) {
+      if (!window.FeedbackUtils?.createFeedbackSession || !window.FeedbackUtils?.bindNonBlankText
+          || !window.FeedbackUtils?.escapeHtml) {
         throw new Error("Required library functions are unavailable");
       }
+      llmSession = window.FeedbackUtils.createFeedbackSession({
+        encryptedApiKey: isManual ? null : window.ENCRYPTED_API_KEY,
+        displayElement: jsPsych.getDisplayElement(),
+        generationSettings: GENERATION_SETTINGS,
+        getRequest: () => ({ systemPrompt: PROMPTS[condition], text: submissionText }),
+        maxAttempts: MAX_ATTEMPTS
+      });
       loaded = true;
     } catch {
       endReason = "helper_load_error";
@@ -82,19 +89,8 @@ const loadHelpers = {
 // ===== 4. AI条件の認証 =====
 const authentication = {
   type: jsPsychCallFunction, async: true, data: { feedback_phase: "authentication" },
-  func: async done => {
-    try {
-      llmClient = window.FeedbackUtils.createClient(window.ENCRYPTED_API_KEY);
-      await llmClient.authenticate();
-    } catch {
-      endReason = "authentication_error";
-    }
-    done();
-  },
-  on_finish: data => {
-    data.authentication_succeeded = Boolean(llmClient?.isAuthenticated());
-    delete data.value;
-  }
+  func: done => llmSession.authenticate().then(done),
+  on_finish: data => llmSession.recordTrialData(data)
 };
 
 // ===== 5. 対象文章の入力 =====
@@ -120,46 +116,15 @@ const input = {
 // ===== 6. AI生成と必要な場合の再試行 =====
 const generation = {
   type: jsPsychCallFunction, async: true, data: { feedback_phase: "generation" },
-  func: async done => {
-    attempt += 1;
-    error = null;
-    aiText = null;
-    jsPsych.getDisplayElement().textContent = "AIがフィードバックを作成しています。";
-    const record = {
-      generation_attempt: attempt, system_prompt: PROMPTS[condition],
-      api_input: submissionText, model: GENERATION_SETTINGS.model,
-      reasoning_effort: GENERATION_SETTINGS.reasoningEffort,
-      temperature: GENERATION_SETTINGS.temperature,
-      max_output_tokens: GENERATION_SETTINGS.maxOutputTokens,
-      response_model: null, api_response_id: null, ai_feedback: null, api_error: null
-    };
-    try {
-      const result = await llmClient.generate({
-        ...GENERATION_SETTINGS, systemPrompt: PROMPTS[condition], text: submissionText
-      });
-      aiText = result.text;
-      record.ai_feedback = aiText;
-      record.response_model = result.model;
-      record.api_response_id = result.responseId;
-    } catch (failure) {
-      error = window.FeedbackUtils.classifyError(failure);
-      record.api_error = error;
-      if (!error.retryable) endReason = "non_retryable_error";
-      else if (attempt >= MAX_ATTEMPTS) endReason = "max_attempts_reached";
-    }
-    done(record);
-  },
-  on_finish: data => {
-    Object.assign(data, data.value);
-    delete data.value;
-  }
+  func: done => llmSession.generate().then(done),
+  on_finish: data => llmSession.recordTrialData(data)
 };
 const retry = {
   type: jsPsychHtmlButtonResponse, data: { feedback_phase: "retry_decision" },
   stimulus: "<p>AIの応答を取得できませんでした。再試行しますか？</p>",
   choices: ["再試行", "終了"],
   on_finish: data => {
-    data.generation_attempt = attempt;
+    data.generation_attempt = llmSession?.attempt ?? 0;
     data.retry_choice = data.response === 0 ? "retry" : "end";
     if (data.response === 1) endReason = "participant_ended_after_error";
   }
@@ -173,7 +138,7 @@ const generationLoop = {
 const submission = {
   type: jsPsychSurveyHtmlForm, data: { feedback_phase: "submission" },
   preamble: () => `<div><b>${isManual ? "対象文章" : "AIの原案"}</b>
-      <div style="white-space:pre-wrap">${window.FeedbackUtils.escapeHtml(isManual ? submissionText : aiText)}</div></div>`,
+      <div style="white-space:pre-wrap">${window.FeedbackUtils.escapeHtml(isManual ? submissionText : llmSession.feedback)}</div></div>`,
   html: () => isManual
     ? `<label for="final-feedback">対象文章へのフィードバックを書いてください</label>
         <textarea id="final-feedback" name="final_feedback" rows="8" required
@@ -187,7 +152,7 @@ const submission = {
         <label for="final-feedback">提出するフィードバック（編集できます）</label>
         <p>採用しない場合は、空欄でも自分で書いた文章でも提出できます。</p>
         <textarea id="final-feedback" name="final_feedback" rows="8" required
-          style="display:block;width:100%;box-sizing:border-box;font:inherit">${window.FeedbackUtils.escapeHtml(aiText)}</textarea>`,
+          style="display:block;width:100%;box-sizing:border-box;font:inherit">${window.FeedbackUtils.escapeHtml(llmSession.feedback)}</textarea>`,
   button_label: "提出する",
   on_load: () => {
     const form = document.querySelector("#jspsych-survey-html-form");
@@ -199,10 +164,10 @@ const submission = {
     const response = data.response;
     const finalText = response.final_feedback ?? "";
     data.submission = submissionText;
-    data.ai_feedback = aiText;
+    data.ai_feedback = isManual ? null : llmSession.feedback;
     data.final_feedback = finalText;
-    data.generation_attempt = attempt;
-    data.text_changed = isManual ? null : finalText !== aiText;
+    data.generation_attempt = llmSession?.attempt ?? 0;
+    data.text_changed = isManual ? null : finalText !== llmSession.feedback;
     data.adoption = isManual ? null : response.adoption;
     delete data.response;
   }
@@ -212,16 +177,16 @@ const submission = {
 const finish = {
   type: jsPsychHtmlButtonResponse,
   stimulus: () => {
-    if (endReason === null) return "<p>提出を受け付けました。ご協力ありがとうございました。</p>";
+    if (terminationReason() === null) return "<p>提出を受け付けました。ご協力ありがとうございました。</p>";
     if (endReason === "declined_consent") return "<p>実験を終了します。</p>";
     return "<p>実験を途中で終了しました。実験者にお知らせください。</p>";
   },
   choices: ["終了"],
   on_finish: data => {
-    data.feedback_phase = endReason === null ? "complete" : "termination";
-    data.termination_reason = endReason;
-    data.generation_attempt = attempt;
-    llmClient?.clear();
+    data.feedback_phase = terminationReason() === null ? "complete" : "termination";
+    data.termination_reason = terminationReason();
+    data.generation_attempt = llmSession?.attempt ?? 0;
+    llmSession?.clear();
   }
 };
 
@@ -245,6 +210,6 @@ const timeline = [
   finish
 ];
 jsPsych.run(timeline).catch(() => {
-  llmClient?.clear();
+  llmSession?.clear();
   jsPsych.getDisplayElement().textContent = "実験を継続できませんでした。実験者にお知らせください。";
 });
