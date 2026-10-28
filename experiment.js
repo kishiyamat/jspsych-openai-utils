@@ -96,71 +96,44 @@ const generationFailure = {
   choices: ["次の課題へ"]
 };
 
-const manualSubmission = {
+const submission = {
   type: jsPsychSurvey,
   data: { feedback_phase: "submission" },
   survey_json: {
     showQuestionNumbers: "off", showCompletedPage: false, completeText: "提出する",
-    elements: [{ type: "comment", name: "final_feedback",
-      title: "対象文章へのフィードバックを書いてください", rows: 8, isRequired: true,
+    elements: [{ type: "comment", name: "final_feedback", title: "対象文章へのフィードバック",
+      placeholder: "対象文章へのフィードバックを入力してください", rows: 8, isRequired: true,
       requiredErrorText: "フィードバックを入力してください。" }]
-  },
-  on_finish: data => {
-    const inputRow = jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0];
-    data.submission = inputRow.submission;
-    data.ai_feedback = null;
-    data.final_feedback = data.response.final_feedback;
-    data.generation_attempt = 0;
-    data.text_changed = null;
-    data.adoption = null;
-    delete data.response;
-  }
-};
-
-const aiSubmission = {
-  type: jsPsychSurvey,
-  data: { feedback_phase: "submission" },
-  survey_json: {
-    showQuestionNumbers: "off", showCompletedPage: false, completeText: "提出する",
-    elements: [
-      { type: "comment", name: "ai_draft", title: "AIの原案", readOnly: true, rows: 8 },
-      { type: "radiogroup", name: "adoption", title: "AIの原案をどのように扱いましたか？", isRequired: true,
-        requiredErrorText: "採用方法を選んでください。", choices: [
-          { value: "as_is", text: "そのまま採用" },
-          { value: "edited", text: "編集して採用" },
-          { value: "rejected", text: "採用しない" }
-        ] },
-      { type: "comment", name: "final_feedback", title: "提出するフィードバック（編集できます）",
-        description: "採用しない場合は、空欄でも自分で書いた文章でも提出できます。", rows: 8,
-        requiredErrorText: "フィードバックを入力してください。",
-        requiredIf: "{adoption} notempty and {adoption} != 'rejected'" }
-    ]
   },
   survey_function: survey => {
     const inputRow = jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0];
-    const generationRow = jsPsych.data.get().filter({ feedback_phase: "generation", system_prompt_type: inputRow.system_prompt_type }).last(1).values()[0];
-    survey.setValue("ai_draft", generationRow.ai_feedback);
-    survey.setValue("final_feedback", generationRow.ai_feedback);
+    if (inputRow.system_prompt_type !== "manual") {
+      const generationRow = jsPsych.data.get().filter({ feedback_phase: "generation", system_prompt_type: inputRow.system_prompt_type }).last(1).values()[0];
+      survey.setValue("final_feedback", generationRow.ai_feedback);
+    }
   },
   on_finish: data => {
-    const response = data.response || {};
     const inputRow = jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0];
-    const generationRow = jsPsych.data.get().filter({ feedback_phase: "generation", system_prompt_type: inputRow.system_prompt_type }).last(1).values()[0];
-    const finalFeedback = response.adoption === "rejected" && !/\S/.test(response.final_feedback ?? "")
-      ? "" : response.final_feedback ?? "";
+    const finalFeedback = data.response.final_feedback;
     data.submission = inputRow.submission;
-    data.ai_feedback = generationRow.ai_feedback;
     data.final_feedback = finalFeedback;
-    data.generation_attempt = generationRow.generation_attempt;
-    data.text_changed = finalFeedback !== generationRow.ai_feedback;
-    data.adoption = response.adoption ?? null;
+    if (inputRow.system_prompt_type === "manual") {
+      data.ai_feedback = null;
+      data.generation_attempt = 0;
+      data.text_changed = null;
+    } else {
+      const generationRow = jsPsych.data.get().filter({ feedback_phase: "generation", system_prompt_type: inputRow.system_prompt_type }).last(1).values()[0];
+      data.ai_feedback = generationRow.ai_feedback;
+      data.generation_attempt = generationRow.generation_attempt;
+      data.text_changed = finalFeedback !== generationRow.ai_feedback;
+    }
     delete data.response;
   }
 };
 
 const aiCondition = {
   timeline: [generation,
-    { timeline: [aiSubmission], conditional_function: () =>
+    { timeline: [submission], conditional_function: () =>
       !jsPsych.data.get().filter({ feedback_phase: "generation" }).last(1).values()[0].api_error },
     { timeline: [generationFailure], conditional_function: () =>
       Boolean(jsPsych.data.get().filter({ feedback_phase: "generation" }).last(1).values()[0].api_error) }
@@ -170,7 +143,7 @@ const aiCondition = {
 };
 
 const manualCondition = {
-  timeline: [manualSubmission],
+  timeline: [submission],
   conditional_function: () =>
     jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0].system_prompt_type === "manual"
 };

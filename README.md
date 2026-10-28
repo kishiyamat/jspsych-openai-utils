@@ -54,6 +54,8 @@ const generation = {
 
 The experiment must remove the password from trial data and must never put the password or decrypted API key in browser storage or logs. Keep submitted text unchanged when sending it. The model and generation settings must be supported together by the selected model.
 
+The sample uses one required feedback field for AI and manual conditions. In AI conditions the generated text is its initial value; `text_changed` is a strict comparison with the submitted text, not a self-reported adoption category.
+
 The utility does not save experiment responses. Use jsPsych data collection/export as appropriate. Client-side encryption does not hide a decrypted API key from participants who can inspect their browser or network requests; use a dedicated key for a controlled study and disable it after the study.
 
 An older release included a Promise-based API and optional jsPsych trial factories. Existing experiments using those interfaces can continue to use their pinned immutable release.
