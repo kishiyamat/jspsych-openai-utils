@@ -38,3 +38,22 @@ async function generate({ apiKey, model = "gpt-5-mini", systemPrompt, text,
   if (!feedback) throw new Error("OpenAI returned empty text");
   return { text: feedback, model: json.model ?? model, responseId: json.id ?? null };
 }
+
+/** Classify an API error without returning its raw message or unknown code. */
+function classifyError(failure) {
+  const error = failure ?? {};
+  const nonRetryableCodes = [
+    "insufficient_quota", "credit_balance_exhausted",
+    "project_spend_limit_exceeded", "organization_spend_limit_exceeded",
+    "organization_usage_limit_exceeded"
+  ];
+  const retryable = !nonRetryableCodes.includes(error.code)
+    && (error.message === "OpenAI network error or timeout"
+      || error.status === 429 || error.status >= 500 || error.name === "SyntaxError");
+  const knownCodes = [...nonRetryableCodes, "invalid_api_key", "model_not_found"];
+  return {
+    http_status: error.status ?? null,
+    retryable,
+    code: knownCodes.includes(error.code) ? error.code : "generation_failed"
+  };
+}

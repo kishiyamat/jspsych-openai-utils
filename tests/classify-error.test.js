@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
-const source = fs.readFileSync('src/client.js', 'utf8');
+const source = fs.readFileSync('src/openai.js', 'utf8');
 const classifyError = new Function(`${source}\nreturn classifyError;`)();
 
 const nonRetryableCodes = [
@@ -18,3 +18,4 @@ for (const code of nonRetryableCodes) {
 assert.equal(classifyError({ status: 429, code: 'rate_limit_exceeded' }).retryable, true);
 assert.equal(classifyError({ status: 503, code: 'server_error' }).retryable, true);
 console.log('spend exhaustion classification checks passed');
+
