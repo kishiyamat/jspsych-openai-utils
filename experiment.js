@@ -12,9 +12,7 @@ const CONDITIONS = ["prompt_a", "prompt_b", "manual"];
 
 const jsPsych = initJsPsych({ on_finish: () => FeedbackUtils.clearKey() });
 let password = null; // 認証trialへ渡した直後に消し、trial dataには保存しません。
-const aliases = { a: "prompt_a", b: "prompt_b" };
-const query = (jsPsych.data.getURLVariable("system-prompt") || "").toLowerCase();
-const requested = aliases[query] || query;
+const requested = jsPsych.data.getURLVariable("system-prompt");
 const conditionSource = CONDITIONS.includes(requested) ? "query" : "random";
 const condition = conditionSource === "query"
   ? requested : jsPsych.randomization.sampleWithoutReplacement(CONDITIONS, 1)[0];

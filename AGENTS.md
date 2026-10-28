@@ -7,3 +7,4 @@
 
 - Load the shared library as a normal required External JS file; keep experiment settings, trial definitions, and timeline at top level.
 - Read prior answers from jsPsych data rows instead of duplicating them in experiment state. A temporary password variable is allowed only to remove the password from its survey row before authentication.
+- Do not add URL-value aliases; recognize only condition values listed in `CONDITIONS`.

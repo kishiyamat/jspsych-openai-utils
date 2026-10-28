@@ -17,7 +17,7 @@ Never commit a real API key, encrypted experiment key, password, participant res
 
 Paste `experiment.js` into Cognition's Source code. Register `feedback-utils.js` and `encrypted-api-key.js` as External JS files. The experiment calls the utility's callback API directly. For the survey plugin, register `https://unpkg.com/@jspsych/plugin-survey@1.0.1` as External JS and `https://unpkg.com/@jspsych/plugin-survey@1.0.1/css/survey.css` as External CSS. Do not also enable the survey plugin selector, which would load it twice. Enable the usual `html-button-response` and `call-function` selectors.
 
-Conditions are `prompt_a`, `prompt_b`, and `manual`; `?system-prompt=A` or `B` selects the matching AI condition, while a missing or invalid value selects randomly among all three. The experiment keeps consent, conditions, screens, retry choices, timeline, and research fields in ordinary jsPsych trial definitions. Manual participants use the same standard survey screens but do not enter a password or call the API. Declining consent skips password entry and API use.
+Conditions are `prompt_a`, `prompt_b`, and `manual`; `?system-prompt=prompt_a`, `?system-prompt=prompt_b`, or `?system-prompt=manual` selects that condition. A missing or invalid value selects randomly among all three. The experiment keeps consent, conditions, screens, retry choices, timeline, and research fields in ordinary jsPsych trial definitions. Manual participants use the same standard survey screens but do not enter a password or call the API. Declining consent skips password entry and API use.
 
 Cognition's jsPsych integration saves each trial. Actual task registration and data saving in Cognition have not been verified for this example.
 
