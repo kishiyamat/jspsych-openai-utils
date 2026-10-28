@@ -1,6 +1,9 @@
-/* jspsych-openai-utils — browser bundle. No API keys are embedded. */
-(()=>{
-"use strict";
+/* jspsych-openai-utils browser bundle. No API keys are embedded. */
+
+(() => {
+
+  "use strict";
+
 // Password-protected API keys: PBKDF2-SHA256 + AES-256-GCM.
 function decodeBase64(value) {
   return Uint8Array.from(atob(value), char => char.charCodeAt(0));
@@ -25,47 +28,6 @@ async function decryptApiKey(encrypted, password) {
     key, decodeBase64(encrypted.ciphertext)
   );
   return new TextDecoder().decode(bytes);
-}
-
-// OpenAI Responses API. No experiment-specific prompts or keys.
-async function generate({ apiKey, model = "gpt-5-mini", systemPrompt, text,
-                          reasoningEffort = null, temperature = null,
-                          maxOutputTokens = 1000, timeoutMs = 90000 }) {
-  const body = {
-    model, instructions: systemPrompt, input: text,
-    max_output_tokens: maxOutputTokens, store: false
-  };
-  if (reasoningEffort !== null) body.reasoning = { effort: reasoningEffort };
-  if (temperature !== null) body.temperature = temperature;
-  let response;
-  try {
-    response = await fetch("https://api.openai.com/v1/responses", {
-      method: "POST", signal: AbortSignal.timeout(timeoutMs),
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
-      body: JSON.stringify(body)
-    });
-  } catch (error) {
-    throw new Error("OpenAI network error or timeout", { cause: error });
-  }
-  const json = await response.json();
-  if (!response.ok) {
-    const error = new Error("OpenAI API returned HTTP " + response.status);
-    error.status = response.status;
-    error.code = json.error?.code ?? null;
-    throw error;
-  }
-  if (json.status !== "completed") {
-    throw new Error("OpenAI response not completed: " + (json.status ?? "unknown"));
-  }
-  const output = (json.output ?? []).filter(item => item.type === "message")
-    .flatMap(item => item.content ?? []);
-  if (output.some(item => item.type === "refusal")) {
-    throw new Error("OpenAI declined the request");
-  }
-  const feedback = output.filter(item => item.type === "output_text")
-    .map(item => item.text ?? "").join("").trim();
-  if (!feedback) throw new Error("OpenAI returned empty text");
-  return { text: feedback, model: json.model ?? model, responseId: json.id ?? null };
 }
 
 // Minimal browser UI for entering the shared experiment password.
@@ -112,6 +74,47 @@ async function getApiKey(encrypted) {
   }
 }
 
+// OpenAI Responses API. No experiment-specific prompts or keys.
+async function generate({ apiKey, model = "gpt-5-mini", systemPrompt, text,
+                          reasoningEffort = null, temperature = null,
+                          maxOutputTokens = 1000, timeoutMs = 90000 }) {
+  const body = {
+    model, instructions: systemPrompt, input: text,
+    max_output_tokens: maxOutputTokens, store: false
+  };
+  if (reasoningEffort !== null) body.reasoning = { effort: reasoningEffort };
+  if (temperature !== null) body.temperature = temperature;
+  let response;
+  try {
+    response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST", signal: AbortSignal.timeout(timeoutMs),
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + apiKey },
+      body: JSON.stringify(body)
+    });
+  } catch (error) {
+    throw new Error("OpenAI network error or timeout", { cause: error });
+  }
+  const json = await response.json();
+  if (!response.ok) {
+    const error = new Error("OpenAI API returned HTTP " + response.status);
+    error.status = response.status;
+    error.code = json.error?.code ?? null;
+    throw error;
+  }
+  if (json.status !== "completed") {
+    throw new Error("OpenAI response not completed: " + (json.status ?? "unknown"));
+  }
+  const output = (json.output ?? []).filter(item => item.type === "message")
+    .flatMap(item => item.content ?? []);
+  if (output.some(item => item.type === "refusal")) {
+    throw new Error("OpenAI declined the request");
+  }
+  const feedback = output.filter(item => item.type === "output_text")
+    .map(item => item.text ?? "").join("").trim();
+  if (!feedback) throw new Error("OpenAI returned empty text");
+  return { text: feedback, model: json.model ?? model, responseId: json.id ?? null };
+}
+
 /**
  * Create an LLM client that keeps a decrypted key in a private closure.
  * This API is independent of jsPsych and returns no key value.
@@ -140,10 +143,17 @@ function createClient(encryptedApiKey) {
 
 /** Convert an API failure to safe status fields for study data. */
 function classifyError(failure) {
+  const nonRetryableCodes = [
+    "insufficient_quota",
+    "credit_balance_exhausted",
+    "project_spend_limit_exceeded",
+    "organization_spend_limit_exceeded",
+    "organization_usage_limit_exceeded"
+  ];
   const retryable = failure.message === "OpenAI network error or timeout"
-    || (failure.status === 429 && failure.code !== "insufficient_quota")
+    || (failure.status === 429 && !nonRetryableCodes.includes(failure.code))
     || failure.status >= 500 || failure.name === "SyntaxError";
-  const knownCodes = ["insufficient_quota", "invalid_api_key", "model_not_found"];
+  const knownCodes = [...nonRetryableCodes, "invalid_api_key", "model_not_found"];
   return {
     http_status: failure.status ?? null,
     retryable,
@@ -151,120 +161,7 @@ function classifyError(failure) {
   };
 }
 
-// Optional legacy jsPsych adapters. New experiments may keep all trial logic locally.
-/**
- * Create a jsPsych authentication trial.
- * @param {{jsPsych: object, encryptedApiKey: object, onError?: Function}} options
- * @returns {{trial: object, getApiKey: Function, clearApiKey: Function}}
- * The decrypted key is kept in this closure and is never returned as trial data.
- */
-function createAuthenticationTrial({ jsPsych, encryptedApiKey, onError = () => {} }) {
-  let apiKey = null;
-  const trial = {
-    type: jsPsychCallFunction,
-    async: true,
-    data: { feedback_phase: "authentication" },
-    func: async done => {
-      jsPsych.getDisplayElement().textContent = "";
-      try {
-        apiKey = await getApiKey(encryptedApiKey);
-      } catch {
-        apiKey = null;
-        onError();
-      }
-      done();
-    },
-    on_finish: data => {
-      data.authentication_succeeded = apiKey !== null;
-      delete data.value;
-    }
-  };
-  return {
-    trial,
-    getApiKey: () => apiKey,
-    clearApiKey: () => { apiKey = null; }
-  };
-}
+  window.FeedbackUtils = Object.freeze({ getApiKey, generate, decryptApiKey, createClient, classifyError });
 
-/**
- * Create a jsPsych generation trial with an explicit allowlist of saved fields.
- * @param {{jsPsych: object, getApiKey: Function, getSystemPrompt: Function, getInput: Function, model: string, reasoningEffort?: string|null, temperature?: number|null, maxOutputTokens?: number, maxAttempts?: number, onStart?: Function, onStop?: Function}} options
- * @returns {{trial: object, getAttempt: Function, getError: Function, getFeedback: Function}}
- * The API key is used only for the request and is never included in trial data.
- */
-function createGenerationTrial({
-  jsPsych,
-  getApiKey,
-  getSystemPrompt,
-  getInput,
-  model,
-  reasoningEffort = null,
-  temperature = null,
-  maxOutputTokens = 1000,
-  maxAttempts = 3,
-  onStart = () => {},
-  onStop = () => {}
-}) {
-  let attempt = 0;
-  let error = null;
-  let feedback = null;
-  const trial = {
-    type: jsPsychCallFunction,
-    async: true,
-    data: { feedback_phase: "generation" },
-    func: async done => {
-      attempt += 1;
-      error = null;
-      feedback = null;
-      onStart();
-      const systemPrompt = getSystemPrompt();
-      const input = getInput();
-      const record = {
-        generation_attempt: attempt,
-        system_prompt: systemPrompt,
-        api_input: input,
-        model,
-        reasoning_effort: reasoningEffort,
-        temperature,
-        max_output_tokens: maxOutputTokens,
-        response_model: null,
-        api_response_id: null,
-        ai_feedback: null,
-        api_error: null
-      };
-      try {
-        const result = await generate({
-          apiKey: getApiKey(),
-          model,
-          reasoningEffort,
-          temperature,
-          maxOutputTokens,
-          systemPrompt,
-          text: input
-        });
-        feedback = result.text;
-        record.ai_feedback = feedback;
-        record.response_model = result.model;
-        record.api_response_id = result.responseId;
-      } catch (failure) {
-        error = classifyError(failure);
-        record.api_error = error;
-        if (!error.retryable) onStop("non_retryable_error");
-        else if (attempt >= maxAttempts) onStop("max_attempts_reached");
-      }
-      done(record);
-    },
-    on_finish: data => {
-      Object.assign(data, data.value);
-      delete data.value;
-    }
-  };
-  return {
-    trial,
-    getAttempt: () => attempt,
-    getError: () => error,
-    getFeedback: () => feedback
-  };
-}
-window.FeedbackUtils = Object.freeze({ getApiKey, generate, decryptApiKey, createClient, classifyError, createAuthenticationTrial, createGenerationTrial });
 })();
+

@@ -26,10 +26,17 @@ function createClient(encryptedApiKey) {
 
 /** Convert an API failure to safe status fields for study data. */
 function classifyError(failure) {
+  const nonRetryableCodes = [
+    "insufficient_quota",
+    "credit_balance_exhausted",
+    "project_spend_limit_exceeded",
+    "organization_spend_limit_exceeded",
+    "organization_usage_limit_exceeded"
+  ];
   const retryable = failure.message === "OpenAI network error or timeout"
-    || (failure.status === 429 && failure.code !== "insufficient_quota")
+    || (failure.status === 429 && !nonRetryableCodes.includes(failure.code))
     || failure.status >= 500 || failure.name === "SyntaxError";
-  const knownCodes = ["insufficient_quota", "invalid_api_key", "model_not_found"];
+  const knownCodes = [...nonRetryableCodes, "invalid_api_key", "model_not_found"];
   return {
     http_status: failure.status ?? null,
     retryable,
