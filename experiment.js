@@ -1,17 +1,22 @@
 // CognitionのSource codeへ貼り付ける実験本体（jsPsych 7/8）。
-// 共通utilはAI認証時に読み込む。人手条件では認証・生成を呼ばない。
-// AI条件ではencrypted-api-key.js（window.ENCRYPTED_API_KEY）も必要。
-// プラグイン: html-button-response / survey / call-function。キー・パスワードは実験データへ記録しない。
+// 条件と記録は実験側、LLM処理は共通ライブラリが担当します。
+// 必要プラグイン: html-button-response / survey-html-form / call-function。
+// AI条件ではencrypted-api-key.js（window.ENCRYPTED_API_KEY）も必要です。
 
 // ===== 1. 実験設定 =====
-const MODEL = "gpt-6-luna";
+const GENERATION_SETTINGS = Object.freeze({
+  model: "gpt-6-luna",
+  reasoningEffort: "none",
+  temperature: 0.3,
+  maxOutputTokens: 1000
+});
 const MAX_ATTEMPTS = 3;
-const LIBRARY_URL = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@52cecba5904b1282c0de0489afa9314d93be2243/dist/feedback-utils.js";
+// 調査中も同じ処理を使うため、検証済みの版を指定します。
+const LIBRARY_URL = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@7f05928c0129af28f5e2505a1366b83664b9ff7b/dist/feedback-utils.js";
 const PROMPTS = {
   prompt_a: "あなたは文章改善を支援するAIです。対象文章の改善点と具体的な改善案（書き換え例を含む）を直接示してください。日本語で簡潔に。",
   prompt_b: "あなたは文章改善を支援するAIです。答えを直接示さず、本人が自分で改善できるよう、問い返しを中心にフィードバックしてください。書き換え例は示さないでください。日本語で簡潔に。"
 };
-const jsPsych = initJsPsych();
 const conditions = ["prompt_a", "prompt_b", "manual"];
 const requestedValue = (new URLSearchParams(location.search).get("system-prompt") || "").toLowerCase();
 const aliases = { a: "prompt_a", b: "prompt_b" };
@@ -19,16 +24,31 @@ const requested = aliases[requestedValue] || requestedValue;
 const condition = conditions.includes(requested)
   ? requested : conditions[Math.floor(Math.random() * conditions.length)];
 const isManual = condition === "manual";
+const jsPsych = initJsPsych();
 jsPsych.data.addProperties({
-  experiment_version: "2026-10-27-v7", feedback_session_id: crypto.randomUUID(),
+  experiment_version: "2026-10-28-v8",
+  feedback_session_id: crypto.randomUUID(),
   system_prompt_type: condition,
   system_prompt_source: conditions.includes(requested) ? "query" : "random"
 });
 let submissionText = "", endReason = null;
 const canContinue = () => endReason === null;
-const nonBlank = { type: "regex", regex: "\\S", text: "空白以外の文字を入力してください。" };
 const escapeHtml = text => String(text ?? "").replace(/[&<>"']/g, ch => `&#${ch.charCodeAt(0)};`);
-// LLM認証: AI条件でのみhelperを読み込み、clientを作って認証する。
+
+// ===== 2. 同意 =====
+const consent = {
+  type: jsPsychHtmlButtonResponse, data: { feedback_phase: "consent" },
+  stimulus: `<p>文章へのフィードバックに関する実験です。課題は1件です。</p>
+    <p>${isManual ? "対象文章と、その文章へのフィードバックを自分で入力します。AIは使用しません。"
+      : "対象文章を入力し、AIのフィードバックを確認・編集して提出します。対象文章をOpenAIへ送信します。"}</p>
+    <p>入力・AIの出力（AI条件のみ）・提出文・操作を記録します。個人情報は入力しないでください。</p>`,
+  choices: ["同意する", "同意しない"],
+  on_finish: data => {
+    if (data.response === 1) endReason = "declined_consent";
+  }
+};
+
+// ===== 3. AI条件の認証 =====
 let llmClient = null;
 const authentication = {
   type: jsPsychCallFunction, async: true, data: { feedback_phase: "authentication" },
@@ -49,9 +69,33 @@ const authentication = {
     delete data.value;
   }
 };
+
+// ===== 4. 対象文章の入力 =====
+const input = {
+  type: jsPsychSurveyHtmlForm, data: { feedback_phase: "input" },
+  preamble: `<p>${isManual ? "フィードバックの対象文章を入力してください。" : "AIに見せる文章を入力してください。"}</p>`,
+  html: `<label for="submission-input">フィードバックの対象文章</label>
+    <textarea id="submission-input" name="submission" rows="8" maxlength="1000" required
+      placeholder="例：企業が社債を出すコストが上がっている。国債に対する金利の上乗せ幅（スプレッド）は15年ぶりの大きさになった。"
+      style="display:block;width:100%;box-sizing:border-box;font:inherit"></textarea>`,
+  button_label: isManual ? "フィードバックを書く" : "AIに依頼する",
+  on_load: () => {
+    const form = document.querySelector("#jspsych-survey-html-form");
+    const text = form.querySelector("#submission-input");
+    const validate = () => text.setCustomValidity(/\S/.test(text.value) ? "" : "空白以外の文字を入力してください。");
+    text.addEventListener("input", validate);
+    validate();
+  },
+  on_finish: data => {
+    submissionText = data.response.submission;
+    data.submission = submissionText;
+    delete data.response;
+  }
+};
+
+// ===== 5. AI生成 =====
 let attempt = 0, error = null, aiText = null;
 const needsRetry = () => error !== null && canContinue();
-// LLM生成: 研究側のtrialがLLM clientを呼び、保存列を明示的に組み立てる。
 const generation = {
   type: jsPsychCallFunction, async: true, data: { feedback_phase: "generation" },
   func: async done => {
@@ -61,14 +105,15 @@ const generation = {
     jsPsych.getDisplayElement().textContent = "AIがフィードバックを作成しています。";
     const record = {
       generation_attempt: attempt, system_prompt: PROMPTS[condition],
-      api_input: submissionText, model: MODEL,
-      reasoning_effort: "none", temperature: 0.3, max_output_tokens: 1000,
+      api_input: submissionText, model: GENERATION_SETTINGS.model,
+      reasoning_effort: GENERATION_SETTINGS.reasoningEffort,
+      temperature: GENERATION_SETTINGS.temperature,
+      max_output_tokens: GENERATION_SETTINGS.maxOutputTokens,
       response_model: null, api_response_id: null, ai_feedback: null, api_error: null
     };
     try {
       const result = await llmClient.generate({
-        model: MODEL, reasoningEffort: "none", temperature: 0.3,
-        maxOutputTokens: 1000, systemPrompt: PROMPTS[condition], text: submissionText
+        ...GENERATION_SETTINGS, systemPrompt: PROMPTS[condition], text: submissionText
       });
       aiText = result.text;
       record.ai_feedback = aiText;
@@ -87,36 +132,6 @@ const generation = {
     delete data.value;
   }
 };
-// ===== 2. 同意・認証・対象文章 =====
-const consent = {
-  type: jsPsychHtmlButtonResponse, data: { feedback_phase: "consent" },
-  stimulus: `<p>文章へのフィードバックに関する実験です。課題は1件です。</p>
-    <p>${isManual ? "対象文章と、その文章へのフィードバックを自分で入力します。AIは使用しません。"
-      : "対象文章を入力し、AIのフィードバックを確認・編集して提出します。対象文章をOpenAIへ送信します。"}</p>
-    <p>入力・AIの出力（AI条件のみ）・提出文・操作を記録します。個人情報は入力しないでください。</p>`,
-  choices: ["同意する", "同意しない"],
-  on_finish: data => {
-    if (data.response === 1) endReason = "declined_consent";
-  }
-};
-const input = {
-  type: jsPsychSurvey, data: { feedback_phase: "input" },
-  survey_json: {
-    showQuestionNumbers: false, completeText: isManual ? "フィードバックを書く" : "AIに依頼する",
-    elements: [{
-      type: "comment", name: "submission", title: "フィードバックの対象文章",
-      placeholder: "例：企業が社債を出すコストが上がっている。国債に対する金利の上乗せ幅（スプレッド）は15年ぶりの大きさになった。",
-      rows: 8, maxLength: 1000, isRequired: true, validators: [nonBlank]
-    }]
-  },
-  on_finish: data => {
-    submissionText = data.response.submission;
-    data.submission = submissionText;
-    delete data.response;
-  }
-};
-
-// ===== 3. AI生成・再試行（人手条件ではスキップ） =====
 const retry = {
   type: jsPsychHtmlButtonResponse, data: { feedback_phase: "retry_decision" },
   stimulus: "<p>AIの応答を取得できませんでした。再試行しますか？</p>",
@@ -132,32 +147,44 @@ const generationLoop = {
   conditional_function: () => !isManual, loop_function: needsRetry
 };
 
-// ===== 4. 確認・編集・採用判定 =====
+// ===== 6. 原案の確認・提出 =====
 const submission = {
-  type: jsPsychSurvey, data: { feedback_phase: "submission" },
-  survey_json: () => ({
-    showQuestionNumbers: false, completeText: "提出する",
-    elements: [
-      { type: "html", name: "reference",
-        html: `<b>${isManual ? "対象文章" : "AIの原案"}</b><div style="white-space:pre-wrap">${escapeHtml(isManual ? submissionText : aiText)}</div>` },
-      ...(!isManual ? [{
-        type: "radiogroup", name: "adoption", title: "AIの原案をどのように扱いましたか？", isRequired: true,
-        choices: [
-          { value: "as_is", text: "そのまま採用" },
-          { value: "edited", text: "編集して採用" },
-          { value: "rejected", text: "採用しない" }
-        ]
-      }] : []),
-      { type: "comment", name: "final_feedback", rows: 8,
-        title: isManual ? "対象文章へのフィードバックを書いてください" : "提出するフィードバック（編集できます）",
-        description: isManual ? "" : "採用しない場合は、空欄でも自分で書いた文章でも提出できます。",
-        isRequired: isManual,
-        requiredIf: !isManual ? "{adoption} != 'rejected'" : undefined,
-        validators: [nonBlank] }
-    ]
-  }),
-  survey_function: survey => {
-    if (!isManual) survey.setValue("final_feedback", aiText);
+  type: jsPsychSurveyHtmlForm, data: { feedback_phase: "submission" },
+  preamble: "", html: "",
+  // 生成後の原案を表示するため、画面文字列は試行開始時に組み立てます。
+  on_start: trial => {
+    trial.preamble = `<div><b>${isManual ? "対象文章" : "AIの原案"}</b>
+      <div style="white-space:pre-wrap">${escapeHtml(isManual ? submissionText : aiText)}</div></div>`;
+    trial.html = isManual
+      ? `<label for="final-feedback">対象文章へのフィードバックを書いてください</label>
+        <textarea id="final-feedback" name="final_feedback" rows="8" required
+          style="display:block;width:100%;box-sizing:border-box;font:inherit"></textarea>`
+      : `<fieldset style="display:grid;gap:.35em;text-align:left">
+          <legend>AIの原案をどのように扱いましたか？</legend>
+          <label><input type="radio" name="adoption" value="as_is" required>そのまま採用</label>
+          <label><input type="radio" name="adoption" value="edited" required>編集して採用</label>
+          <label><input type="radio" name="adoption" value="rejected" required>採用しない</label>
+        </fieldset>
+        <label for="final-feedback">提出するフィードバック（編集できます）</label>
+        <p>採用しない場合は、空欄でも自分で書いた文章でも提出できます。</p>
+        <textarea id="final-feedback" name="final_feedback" rows="8" required
+          style="display:block;width:100%;box-sizing:border-box;font:inherit">${escapeHtml(aiText)}</textarea>`;
+  },
+  button_label: "提出する",
+  on_load: () => {
+    const form = document.querySelector("#jspsych-survey-html-form");
+    const text = form.querySelector("#final-feedback");
+    const choices = form.querySelectorAll('input[name="adoption"]');
+    const validate = () => {
+      const adoption = form.querySelector('input[name="adoption"]:checked')?.value;
+      const emptyRejected = adoption === "rejected" && text.value === "";
+      text.required = adoption !== "rejected";
+      text.setCustomValidity(!/\S/.test(text.value) && !emptyRejected
+        ? "空白以外の文字を入力してください。" : "");
+    };
+    text.addEventListener("input", validate);
+    choices.forEach(choice => choice.addEventListener("change", validate));
+    validate();
   },
   on_finish: data => {
     const response = data.response;
@@ -171,6 +198,8 @@ const submission = {
     delete data.response;
   }
 };
+
+// ===== 7. 終了 =====
 const finish = {
   type: jsPsychHtmlButtonResponse,
   stimulus: () => {
@@ -183,12 +212,11 @@ const finish = {
     data.feedback_phase = endReason === null ? "complete" : "termination";
     data.termination_reason = endReason;
     data.generation_attempt = attempt;
-    // LLMキー解放: 終了時にclientのclosureを消去する。
     llmClient?.clear();
   }
 };
 
-// ===== 5. 実行順序（データの回収はCognition側で確認する） =====
+// ===== 8. 実行 =====
 jsPsych.run([
   consent,
   { timeline: [authentication], conditional_function: () => !isManual && canContinue() },
@@ -200,5 +228,3 @@ jsPsych.run([
   llmClient?.clear();
   jsPsych.getDisplayElement().textContent = "実験を継続できませんでした。実験者にお知らせください。";
 });
-
-
