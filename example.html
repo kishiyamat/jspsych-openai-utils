@@ -6,27 +6,31 @@
 <body>
 <script src="./dist/feedback-utils.js"></script>
 <h1>Utility usage</h1>
-<p>This file shows the utility calls only. The participant screens, consent, and trial data belong in the experiment.</p>
-<pre><code>async function generateForOneTrial(passwordFromTheSurveyResponse, rawSubmission) {
-  let apiKey = await FeedbackUtils.decryptApiKey(
+<p>The utility handles API-key decryption and the OpenAI request. Keep the password and decrypted key out of trial data.</p>
+<pre><code>const authentication = {
+  type: jsPsychCallFunction,
+  async: true,
+  func: done =&gt; FeedbackUtils.decryptApiKey(
     window.ENCRYPTED_API_KEY,
-    passwordFromTheSurveyResponse
-  );
-  try {
-    const result = await FeedbackUtils.generate({
-      apiKey,
-      model: "gpt-6-luna",
-      reasoningEffort: "none",
-      temperature: 0.3,
-      maxOutputTokens: 1000,
-      systemPrompt: "Study-specific instruction",
-      text: rawSubmission
-    });
-    // Record result.text in the generation trial.
-  } finally {
-    apiKey = null;
-  }
-}</code></pre>
-<p>Do not store password or apiKey in trial data, browser storage, or logs. See <a href="README.md">README.md</a> for the Cognition plugin and stylesheet requirements.</p>
+    passwordFromSurvey,
+    done
+  )
+};
+
+const generation = {
+  type: jsPsychCallFunction,
+  async: true,
+  func: done =&gt; FeedbackUtils.generate({
+    model: "gpt-6-luna",
+    reasoningEffort: "none",
+    temperature: 0.3,
+    maxOutputTokens: 1000,
+    systemPrompt: "Study-specific instruction",
+    text: rawSubmission
+  }, done)
+};
+
+FeedbackUtils.clearKey();</code></pre>
+<p>Use the returned safe fields in the experiment's own trial data. See <a href="README.md">README.md</a> for Cognition plugin and stylesheet requirements.</p>
 </body>
 </html>

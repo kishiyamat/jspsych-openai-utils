@@ -3,7 +3,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const context = { crypto: crypto.webcrypto, atob, TextEncoder, TextDecoder, Uint8Array };
-vm.runInNewContext(`${fs.readFileSync("src/crypto.js", "utf8")}\nglobalThis.decryptApiKeyForTest = decryptApiKey;`, context);
+vm.runInNewContext(`${fs.readFileSync("src/crypto.js", "utf8")}\nglobalThis.decryptApiKeyForTest = decryptKey;`, context);
 
 async function main() {
   const password = "fake-password-only-123456789";

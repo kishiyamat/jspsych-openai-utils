@@ -1,5 +1,5 @@
 // OpenAI Responses API. No experiment-specific prompts or keys.
-async function generate({ apiKey, model = "gpt-5-mini", systemPrompt, text,
+async function requestFeedback({ apiKey, model = "gpt-5-mini", systemPrompt, text,
                           reasoningEffort = null, temperature = null,
                           maxOutputTokens = 1000, timeoutMs = 90000 }) {
   const body = {
@@ -56,4 +56,38 @@ function classifyError(failure) {
     retryable,
     code: knownCodes.includes(error.code) ? error.code : "generation_failed"
   };
+}
+
+
+// Keep the decrypted key inside this utility; jsPsych receives only safe records.
+let activeApiKey = null;
+
+function decryptApiKey(encrypted, password, done) {
+  decryptKey(encrypted, password).then(key => {
+    activeApiKey = key;
+    done({ authentication_succeeded: true, authentication_error: null });
+  }, error => {
+    activeApiKey = null;
+    done({ authentication_succeeded: false,
+      authentication_error: error?.name === "OperationError" ? "wrong_password" : "decryption_error" });
+  });
+}
+
+function generate(options, done) {
+  if (!activeApiKey) {
+    done({ response_model: null, api_response_id: null, ai_feedback: null,
+      api_error: { http_status: null, retryable: false, code: "not_authenticated" } });
+    return;
+  }
+  requestFeedback({ ...options, apiKey: activeApiKey }).then(result => {
+    done({ response_model: result.model, api_response_id: result.responseId,
+      ai_feedback: result.text, api_error: null });
+  }, error => {
+    done({ response_model: null, api_response_id: null, ai_feedback: null,
+      api_error: classifyError(error ?? new Error("Unknown failure")) });
+  });
+}
+
+function clearKey() {
+  activeApiKey = null;
 }

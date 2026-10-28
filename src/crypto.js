@@ -3,7 +3,7 @@ function decodeBase64(value) {
   return Uint8Array.from(atob(value), char => char.charCodeAt(0));
 }
 
-async function decryptApiKey(encrypted, password) {
+async function decryptKey(encrypted, password) {
   if (!globalThis.crypto?.subtle) {
     throw new Error("HTTPS or localhost is required.");
   }
@@ -23,3 +23,4 @@ async function decryptApiKey(encrypted, password) {
   );
   return new TextDecoder().decode(bytes);
 }
+

@@ -1,7 +1,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const openaiSource = fs.readFileSync("src/openai.js", "utf8");
-const { generate, classifyError } = new Function(`${openaiSource}\nreturn { generate, classifyError };`)();
+const { generate, classifyError } = new Function(`${openaiSource}\nreturn { generate: requestFeedback, classifyError };`)();
 
 async function main() {
   let request;

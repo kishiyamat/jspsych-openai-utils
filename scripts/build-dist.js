@@ -9,7 +9,7 @@ const bundle = [
   "(() => {",
   '  "use strict";',
   ...sources,
-  "  window.FeedbackUtils = Object.freeze({ decryptApiKey, generate, classifyError });",
+  "  window.FeedbackUtils = Object.freeze({ decryptApiKey, generate, clearKey, classifyError });",
   "})();",
   ""
 ].join("\n\n");
