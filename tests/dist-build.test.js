@@ -13,6 +13,12 @@ assert.equal(fs.readFileSync(runnerPath, "utf8"), runnerBefore, "runner dist mus
 assert.match(before, /window\.FeedbackUtils = Object\.freeze\(/);
 assert.match(before, /createFeedbackSession/);
 assert.doesNotMatch(before, /createAuthenticationTrial|createGenerationTrial|jsPsychCallFunction/);
-assert.match(runnerBefore, /export \{ runStudy \}/);
+assert.match(runnerBefore, /export \{ createFeedbackFlow \}/);
+assert.doesNotMatch(runnerBefore, /runStudy|initJsPsych|jsPsych\.run/);
 assert.doesNotMatch(runnerBefore, /window\.FeedbackUtils\s*=.*createClient/);
+const experiment = fs.readFileSync("experiment.js", "utf8");
+assert.match(experiment, /const jsPsych = initJsPsych\(\)/);
+assert.match(experiment, /const timeline = \[/);
+assert.match(experiment, /jsPsych\.run\(timeline\)/);
+assert.doesNotMatch(experiment, /defineStudy|runStudy/);
 console.log("dist/source consistency checks passed");

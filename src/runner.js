@@ -78,30 +78,4 @@ function createFeedbackFlow({
   };
 }
 
-async function runStudy(defineStudy, { initJsPsych, callFunctionPlugin }) {
-  let jsPsych;
-  const flows = [];
-  try {
-    jsPsych = initJsPsych();
-    const timeline = defineStudy({
-      jsPsych,
-      createFeedbackFlow: options => {
-        const flow = createFeedbackFlow({
-          ...options,
-          callFunctionPlugin,
-          getDisplayElement: () => jsPsych.getDisplayElement()
-        });
-        flows.push(flow);
-        return flow;
-      }
-    });
-    await jsPsych.run(timeline);
-  } catch {
-    const display = jsPsych?.getDisplayElement?.() ?? document.body;
-    display.textContent = "実験を継続できませんでした。実験者にお知らせください。";
-  } finally {
-    flows.forEach(flow => flow.clear());
-  }
-}
-
-export { runStudy };
+export { createFeedbackFlow };
