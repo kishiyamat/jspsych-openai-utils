@@ -18,11 +18,24 @@ async function requestFeedback({ apiKey, model = "gpt-5-mini", systemPrompt, tex
   } catch (error) {
     throw new Error("OpenAI network error or timeout", { cause: error });
   }
-  const json = await response.json();
+  const retryAfterMs = parseRetryAfter(response.headers?.get("Retry-After"));
+  let json;
+  try {
+    json = await response.json();
+  } catch (error) {
+    if (!response.ok) {
+      const failure = new Error("OpenAI API returned HTTP " + response.status);
+      failure.status = response.status;
+      failure.retryAfterMs = retryAfterMs;
+      throw failure;
+    }
+    throw error;
+  }
   if (!response.ok) {
     const error = new Error("OpenAI API returned HTTP " + response.status);
     error.status = response.status;
     error.code = json.error?.code ?? null;
+    error.retryAfterMs = retryAfterMs;
     throw error;
   }
   if (json.status !== "completed") {
@@ -37,6 +50,14 @@ async function requestFeedback({ apiKey, model = "gpt-5-mini", systemPrompt, tex
     .map(item => item.text ?? "").join("").trim();
   if (!feedback) throw new Error("OpenAI returned empty text");
   return { text: feedback, model: json.model ?? model, responseId: json.id ?? null };
+}
+
+function parseRetryAfter(value) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : null;
 }
 
 /** Classify an API error without returning its raw message or unknown code. */
@@ -73,19 +94,58 @@ function decryptApiKey(encrypted, password, done) {
   });
 }
 
-function generate(options, done) {
+const MAX_API_ATTEMPTS = 5;
+const MAX_RETRY_AFTER_MS = 30000;
+const MAX_BACKOFF_MS = 8000;
+
+function retryDelay(error, attempt) {
+  if (Number.isFinite(error?.retryAfterMs)) {
+    return error.retryAfterMs <= MAX_RETRY_AFTER_MS ? error.retryAfterMs : null;
+  }
+  const backoff = Math.min(500 * (2 ** (attempt - 1)), MAX_BACKOFF_MS);
+  return Math.round(Math.min(MAX_BACKOFF_MS, backoff * (0.5 + Math.random())));
+}
+
+function wait(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+async function generate(options, done) {
   if (!activeApiKey) {
-    done({ response_model: null, api_response_id: null, ai_feedback: null,
+    done({ generation_attempt: 0, api_attempts: [], response_model: null,
+      api_response_id: null, ai_feedback: null,
       api_error: { http_status: null, retryable: false, code: "not_authenticated" } });
     return;
   }
-  requestFeedback({ ...options, apiKey: activeApiKey }).then(result => {
-    done({ response_model: result.model, api_response_id: result.responseId,
-      ai_feedback: result.text, api_error: null });
-  }, error => {
-    done({ response_model: null, api_response_id: null, ai_feedback: null,
-      api_error: classifyError(error ?? new Error("Unknown failure")) });
-  });
+
+  const api_attempts = [];
+  let result = null;
+  let api_error = null;
+  for (let attempt = 1; attempt <= MAX_API_ATTEMPTS; attempt += 1) {
+    try {
+      result = await requestFeedback({ ...options, apiKey: activeApiKey });
+      api_error = null;
+      api_attempts.push({ attempt, error: null });
+      break;
+    } catch (failure) {
+      api_error = classifyError(failure ?? new Error("Unknown failure"));
+      api_attempts.push({ attempt, error: api_error });
+      if (!api_error.retryable || attempt === MAX_API_ATTEMPTS) break;
+      const delay = retryDelay(failure, attempt);
+      if (delay === null) break;
+      await wait(delay);
+    }
+  }
+
+  if (api_error) {
+    done({ generation_attempt: api_attempts.length, api_attempts,
+      response_model: null, api_response_id: null, ai_feedback: null, api_error });
+    return;
+  }
+
+  done({ generation_attempt: api_attempts.length, api_attempts,
+    response_model: result.model, api_response_id: result.responseId,
+    ai_feedback: result.text, api_error: null });
 }
 
 function clearKey() {

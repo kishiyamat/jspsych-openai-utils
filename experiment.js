@@ -6,7 +6,6 @@ const PROMPTS = {
   prompt_b: "あなたは文章改善を支援するAIです。答えを直接示さず、本人が自分で改善できるよう、問い返しを中心にフィードバックしてください。書き換え例は示さないでください。日本語で簡潔に。"
 };
 const SETTINGS = { model: "gpt-6-luna", reasoningEffort: "none", temperature: 0.3, maxOutputTokens: 1000 };
-const MAX_ATTEMPTS = 3;
 const CONDITIONS = [
   { condition: "prompt_a" },
   { condition: "prompt_b" },
@@ -15,10 +14,6 @@ const CONDITIONS = [
 
 const jsPsych = initJsPsych({ on_finish: () => FeedbackUtils.clearKey() });
 let password = null; // 認証trialへ渡した直後に消し、trial dataには保存しません。
-jsPsych.data.addProperties({
-  experiment_version: "2026-10-28-standard-trials-4",
-  feedback_session_id: crypto.randomUUID()
-});
 
 const consent = {
   type: jsPsychHtmlButtonResponse,
@@ -79,10 +74,8 @@ const generation = {
   func: done => {
     const inputRow = jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0];
     const condition = inputRow.system_prompt_type;
-    const attempts = jsPsych.data.get().filter({ feedback_phase: "generation", system_prompt_type: condition }).count();
     const systemPrompt = PROMPTS[condition];
     const record = {
-      generation_attempt: attempts + 1,
       system_prompt: systemPrompt,
       api_input: inputRow.submission,
       model: SETTINGS.model,
@@ -96,39 +89,11 @@ const generation = {
   on_finish: data => { Object.assign(data, data.value); delete data.value; }
 };
 
-const retryDecision = {
+const generationFailure = {
   type: jsPsychHtmlButtonResponse,
-  data: { feedback_phase: "retry_decision" },
-  stimulus: "<p>AIの応答を取得できませんでした。再試行しますか？</p>",
-  choices: ["再試行", "この課題を終了"],
-  on_finish: data => { data.retry_choice = data.response === 0 ? "retry" : "end"; }
-};
-
-const generationLoop = {
-  timeline: [generation, {
-    timeline: [retryDecision],
-    conditional_function: () => {
-      const inputRow = jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0];
-      const rows = jsPsych.data.get().filter({ feedback_phase: "generation", system_prompt_type: inputRow.system_prompt_type });
-      if (rows.count() === 0) return false;
-      const last = rows.last(1).values()[0];
-      return Boolean(last.api_error && last.api_error.retryable === true && rows.count() < MAX_ATTEMPTS);
-    }
-  }],
-  conditional_function: () => {
-    const inputRow = jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0];
-    return inputRow.system_prompt_type !== "manual";
-  },
-  loop_function: () => {
-    const inputRow = jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0];
-    const condition = inputRow.system_prompt_type;
-    const rows = jsPsych.data.get().filter({ feedback_phase: "generation", system_prompt_type: condition });
-    if (rows.count() === 0) return false;
-    const last = rows.last(1).values()[0];
-    if (!last.api_error || last.api_error.retryable !== true || rows.count() >= MAX_ATTEMPTS) return false;
-    const retries = jsPsych.data.get().filter({ feedback_phase: "retry_decision", system_prompt_type: condition });
-    return retries.count() > 0 && retries.last(1).values()[0].response === 0;
-  }
+  data: { feedback_phase: "generation_failure_notice" },
+  stimulus: "<p>AIの応答を取得できませんでした。この課題を終了します。</p>",
+  choices: ["次の課題へ"]
 };
 
 const manualSubmission = {
@@ -193,49 +158,32 @@ const aiSubmission = {
   }
 };
 
-const conditionFinish = {
-  type: jsPsychHtmlButtonResponse,
-  data: { feedback_phase: "condition_finish" },
-  stimulus: "<p>この課題を終了しました。次の課題へ進んでください。</p>",
-  choices: ["次へ"],
-  on_finish: data => {
-    const condition = data.system_prompt_type;
-    const submissions = jsPsych.data.get().filter({ feedback_phase: "submission", system_prompt_type: condition });
-    data.feedback_phase = submissions.count() > 0 ? "complete" : "termination";
-    data.termination_reason = null;
-    if (submissions.count() === 0 && condition !== "manual") {
-      const generations = jsPsych.data.get().filter({ feedback_phase: "generation", system_prompt_type: condition });
-      const retries = jsPsych.data.get().filter({ feedback_phase: "retry_decision", system_prompt_type: condition });
-      const last = generations.count() > 0 ? generations.last(1).values()[0] : null;
-      if (last && last.api_error) {
-        if (!last.api_error.retryable) data.termination_reason = "non_retryable_error";
-        else if (last.generation_attempt >= MAX_ATTEMPTS) data.termination_reason = "max_attempts_reached";
-        else if (retries.count() > 0 && retries.last(1).values()[0].response === 1) data.termination_reason = "participant_ended_after_error";
-        else data.termination_reason = "generation_error";
-      }
-    }
-  }
+const aiCondition = {
+  timeline: [generation,
+    { timeline: [aiSubmission], conditional_function: () =>
+      !jsPsych.data.get().filter({ feedback_phase: "generation" }).last(1).values()[0].api_error },
+    { timeline: [generationFailure], conditional_function: () =>
+      Boolean(jsPsych.data.get().filter({ feedback_phase: "generation" }).last(1).values()[0].api_error) }
+  ],
+  conditional_function: () =>
+    jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0].system_prompt_type !== "manual"
+};
+
+const manualCondition = {
+  timeline: [manualSubmission],
+  conditional_function: () =>
+    jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0].system_prompt_type === "manual"
 };
 
 const taskTimeline = {
-  timeline: [input, generationLoop,
-    { timeline: [manualSubmission], conditional_function: () =>
-      jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0].system_prompt_type === "manual" },
-    { timeline: [aiSubmission], conditional_function: () => {
-      const inputRow = jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0];
-      if (inputRow.system_prompt_type === "manual") return false;
-      const rows = jsPsych.data.get().filter({ feedback_phase: "generation", system_prompt_type: inputRow.system_prompt_type });
-      return rows.count() > 0 && !rows.last(1).values()[0].api_error;
-    } },
-    conditionFinish
-  ],
+  timeline: [input, aiCondition, manualCondition],
   timeline_variables: CONDITIONS,
   randomize_order: true,
   data: { system_prompt_type: jsPsych.timelineVariable("condition") },
   conditional_function: () => {
     const consentRow = jsPsych.data.get().filter({ feedback_phase: "consent" }).last(1).values()[0];
-    const authRows = jsPsych.data.get().filter({ feedback_phase: "authentication" });
-    return consentRow.response === 0 && authRows.count() > 0 && authRows.last(1).values()[0].authentication_succeeded;
+    if (consentRow.response !== 0) return false;
+    return jsPsych.data.get().filter({ feedback_phase: "authentication" }).last(1).values()[0].authentication_succeeded;
   }
 };
 
@@ -250,25 +198,12 @@ const sessionFinish = {
   stimulus: () => {
     const consentRow = jsPsych.data.get().filter({ feedback_phase: "consent" }).last(1).values()[0];
     if (consentRow.response !== 0) return "<p>実験を終了します。</p>";
-    const authRows = jsPsych.data.get().filter({ feedback_phase: "authentication" });
-    if (authRows.count() > 0 && !authRows.last(1).values()[0].authentication_succeeded)
+    const authentication = jsPsych.data.get().filter({ feedback_phase: "authentication" }).last(1).values()[0];
+    if (!authentication.authentication_succeeded)
       return "<p>実験を開始できませんでした。実験者にお知らせください。</p>";
-    const submissions = jsPsych.data.get().filter({ feedback_phase: "submission" });
-    if (submissions.count() === CONDITIONS.length) return "<p>提出を受け付けました。ご協力ありがとうございました。</p>";
-    return "<p>実験を終了しました。実験者にお知らせください。</p>";
+    return "<p>ご協力ありがとうございました。</p>";
   },
-  choices: ["終了"],
-  on_finish: data => {
-    const consentRow = jsPsych.data.get().filter({ feedback_phase: "consent" }).last(1).values()[0];
-    const authRows = jsPsych.data.get().filter({ feedback_phase: "authentication" });
-    const terminations = jsPsych.data.get().filter({ feedback_phase: "termination" });
-    const submissions = jsPsych.data.get().filter({ feedback_phase: "submission" });
-    data.termination_reason = null;
-    if (consentRow.response !== 0) data.termination_reason = "declined_consent";
-    else if (authRows.count() > 0 && !authRows.last(1).values()[0].authentication_succeeded) data.termination_reason = "authentication_error";
-    else if (submissions.count() < CONDITIONS.length && terminations.count() > 0)
-      data.termination_reason = terminations.last(1).values()[0].termination_reason;
-  }
+  choices: ["終了"]
 };
 
 const timeline = [];
