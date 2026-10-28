@@ -7,12 +7,14 @@ A small browser-side library for using OpenAI's Responses API from a jsPsych exp
 ## Files
 
 - `dist/feedback-utils.js`: browser bundle, generated from `src/`
+- `dist/feedback-runner.js`: small ES module that starts a study and loads its sibling helper bundle
 - `src/crypto.js`: password-based decryption (PBKDF2-SHA256 / AES-256-GCM)
 - `src/openai.js`: Responses API request and response handling
 - `src/feedback.js`: password form
 - `src/client.js`: jsPsych-independent client and safe API-error classification
 - `src/forms.js`: HTML escaping and nonblank form validation
 - `src/session.js`: one fixed study request, authentication, retry attempt, and safe generation rows
+- `src/runner.js`: jsPsych entry point and shared preparation/authentication/generation trials
 - `scripts/build-dist.js`: rebuilds the bundle from the source files
 - `example.html`: small client usage example
 
@@ -21,7 +23,7 @@ A small browser-side library for using OpenAI's Responses API from a jsPsych exp
 Load the pinned bundle before the experiment code:
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@6bfae05a40333d587481c95f8163d372d1f067b0/dist/feedback-utils.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@27f1112f316d204fa144a3dd151603cb218442b0/dist/feedback-utils.js"></script>
 <script src="./experiment.js"></script>
 ```
 
@@ -48,11 +50,11 @@ The model and generation settings must be supported together by the selected mod
 
 ### Cognition sample
 
-Paste `experiment.js` into Cognition's Source code and enable `html-button-response`, `survey-html-form`, and `call-function`. The sample uses the standard `survey-html-form` plugin for participant input and submission. Study conditions, prompts, screens, retry decisions, adoption choices, and saved study fields stay in the experiment code. `createFeedbackSession` keeps the authenticated client private and handles authentication, one frozen request across manual retries, and safe authentication/generation rows.
+Paste `experiment.js` into Cognition's Source code and enable `html-button-response`, `survey-html-form`, and `call-function`. The sample uses the standard `survey-html-form` plugin for participant input and submission. Study conditions, prompts, screens, retry decisions, adoption choices, saved study fields, and their order stay visible in the experiment code. The shared runner starts jsPsych and supplies standard preparation, authentication, and generation trials; the shared session handles key authentication, one frozen request across manual retries, and safe authentication/generation rows.
 
-The sample has `prompt_a`, `prompt_b`, and `manual` conditions. `?system-prompt=A` or `B` selects the matching AI condition; if the parameter is missing or invalid, the sample chooses randomly among all three. After consent, a preparation trial ensures the pinned `feedback-utils.js` bundle is loaded (importing it only if needed) and records whether it is ready. Register only `encrypted-api-key.js` (which defines `window.ENCRYPTED_API_KEY`) as an External JS file. The manual condition also loads the helper but skips authentication and generation; declining consent skips the preparation trial.
+The sample has `prompt_a`, `prompt_b`, and `manual` conditions. `?system-prompt=A` or `B` selects the matching AI condition; if the parameter is missing or invalid, the sample chooses randomly among all three. `RUNNER_URL` is the single pinned entry URL; it loads its sibling `feedback-utils.js` from the same release, so the experiment does not need a second library URL. Before consent, the browser downloads the runner module. After consent, a preparation trial loads the core bundle and records whether it is ready. Register only `encrypted-api-key.js` (which defines `window.ENCRYPTED_API_KEY`) as an External JS file. The manual condition loads the helper but skips authentication and generation; declining consent skips core-helper loading, authentication, and generation. If the runner module itself cannot be downloaded, the experiment shows a fixed error before jsPsych starts, so there is no trial row to save.
 
-The visible timeline is consent → helper preparation → (AI authentication when needed) → input → (generation and retry loop for AI conditions) → submission → finish. A helper-load error is recorded in the preparation row and skips authentication and task trials. The experiment code keeps the study-specific condition, screen sequence, retry limit, and data fields visible.
+The visible timeline is consent → helper preparation → (AI authentication when needed) → input → (generation and retry loop for AI conditions) → submission → finish. A helper-load error is recorded in the preparation row and skips authentication and task trials.
 
 The participant enters only the target submission text. Condition-specific instructions are in `PROMPTS`; this sample does not request a separate user instruction. It preserves the submitted string in `submission` and the exact API text in `api_input`. `adoption` records the participant's choice (`as_is`, `edited`, or `rejected`); `text_changed` independently records whether the final text differs from the AI draft.
 
@@ -77,4 +79,5 @@ node tests/classify-error.test.js
 node tests/forms.test.js
 node tests/feedback-session.test.js
 node tests/dist-build.test.js
+node tests/runner.test.js
 ```
