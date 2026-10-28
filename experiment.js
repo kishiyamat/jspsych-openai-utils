@@ -3,9 +3,10 @@
 // 条件・課題画面・研究用の記録項目と、実行順をここに置きます。
 
 // ===== 1. 実験設定 =====
-const RUNNER_URL = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@27f1112f316d204fa144a3dd151603cb218442b0/dist/feedback-runner.js";
+const RUNNER_URL = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@89216cf194ecca27c7e3022a56ed0109e63582cb/dist/feedback-runner.js";
 
-function defineStudy({ jsPsych, createFeedbackFlow }) {
+import(RUNNER_URL).then(function (utils) {
+  const jsPsych = initJsPsych();
   const GENERATION_SETTINGS = Object.freeze({
     model: "gpt-6-luna",
     reasoningEffort: "none",
@@ -27,7 +28,7 @@ function defineStudy({ jsPsych, createFeedbackFlow }) {
   const isManual = condition === "manual";
 
   jsPsych.data.addProperties({
-    experiment_version: "2026-10-28-v11",
+    experiment_version: "2026-10-28-v12",
     feedback_session_id: crypto.randomUUID(),
     system_prompt_type: condition,
     system_prompt_source: conditionSource
@@ -54,7 +55,9 @@ function defineStudy({ jsPsych, createFeedbackFlow }) {
   };
 
   // ===== 3. LLMセッション =====
-  feedbackFlow = createFeedbackFlow({
+  feedbackFlow = utils.createFeedbackFlow({
+    callFunctionPlugin: jsPsychCallFunction,
+    getDisplayElement: () => jsPsych.getDisplayElement(),
     getEncryptedApiKey: () => isManual ? null : window.ENCRYPTED_API_KEY,
     generationSettings: GENERATION_SETTINGS,
     getRequest: () => ({ systemPrompt: PROMPTS[condition], text: submissionText }),
@@ -172,11 +175,7 @@ function defineStudy({ jsPsych, createFeedbackFlow }) {
     taskTimeline,
     finish
   ];
-  return timeline;
-}
-
-import(RUNNER_URL)
-  .then(({ runStudy }) => runStudy(defineStudy, { initJsPsych, callFunctionPlugin: jsPsychCallFunction }))
-  .catch(() => {
-    document.body.textContent = "実験を開始できませんでした。実験者にお知らせください。";
-  });
+  return jsPsych.run(timeline).finally(function () { feedbackFlow.clear(); });
+}).catch(() => {
+  document.body.textContent = "実験を開始または継続できませんでした。実験者にお知らせください。";
+});
