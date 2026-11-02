@@ -13,6 +13,26 @@ const CONDITIONS = [
   { condition: "manual" }
 ];
 
+// 入力欄と提出欄を読みやすく整えます。
+const experimentStyle = document.createElement("style");
+experimentStyle.textContent = `
+  .jspsych-content { width: calc(100% - 2rem); max-width: 48rem; }
+  .sd-root-modern { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Yu Gothic", "Meiryo", sans-serif; }
+  .jspsych-body { box-sizing: border-box; width: 100%; max-width: 48rem; padding: 1rem; }
+  .jspsych-page, .sd-page__row { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; }
+  .jspsych-question-root { box-sizing: border-box; width: 100%; max-width: 100%; overflow: visible; }
+  .sd-element__title { line-height: 1.4; }
+  .sd-input { font-size: 1rem; line-height: 1.5; }
+  .sd-input--readonly { background-color: #f3f5f7; }
+  textarea.sd-input { min-height: 6rem; }
+  .jspsych-nav-complete { min-height: 2.75rem; background-color: #23395d; border-color: #23395d; color: #fff; }
+  @media (max-width: 600px) {
+    .jspsych-content { width: calc(100% - 1rem); }
+    .jspsych-body { padding: 0.75rem; }
+  }
+`;
+document.head.append(experimentStyle);
+
 // 実験終了時に、共通ライブラリが保持しているAPIキーを消去します。
 const jsPsych = initJsPsych({ on_finish: () => FeedbackUtils.clearKey() });
 let password = null; // 認証trialへ渡した直後に消し、trial dataには保存しません。
@@ -112,13 +132,17 @@ const submission = {
   data: { feedback_phase: "submission" },
   survey_json: {
     showQuestionNumbers: "off", showCompletedPage: false, completeText: "提出する",
-    elements: [{ type: "comment", name: "final_feedback", title: "対象文章へのフィードバック",
-      placeholder: "対象文章へのフィードバックを入力してください", rows: 8, isRequired: true,
-      requiredErrorText: "フィードバックを入力してください。" }]
+    elements: [
+      { type: "comment", name: "source_text", title: "対象文章", rows: 7, readOnly: true },
+      { type: "comment", name: "final_feedback", title: "対象文章へのフィードバック",
+        placeholder: "対象文章へのフィードバックを入力してください", rows: 8, isRequired: true,
+        requiredErrorText: "フィードバックを入力してください。" }
+    ]
   },
-  // survey_functionは質問紙の準備時に呼ばれ、AI原文を入力欄の初期値にします。
+  // 直近のinput trialを標準のjsPsych.dataから読み、対象文章とAI原文を欄へ設定します。
   survey_function: survey => {
     const inputRow = jsPsych.data.get().filter({ feedback_phase: "input" }).last(1).values()[0];
+    survey.setValue("source_text", inputRow.submission);
     if (inputRow.system_prompt_type !== "manual") {
       const generationRow = jsPsych.data.get().filter({ feedback_phase: "generation", system_prompt_type: inputRow.system_prompt_type }).last(1).values()[0];
       survey.setValue("final_feedback", generationRow.ai_feedback);
