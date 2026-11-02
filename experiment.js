@@ -1,6 +1,5 @@
-// Cognition の Source code に貼り付ける jsPsych 7/8 の例。
-// External JS: encrypted-api-key.js、survey 1.0.1。
-// survey CSS も External CSS に登録し、html-button-response/call-function を有効にする。
+// Cognition の Source code に貼り付ける jsPsych 8 / Survey 4 の例。
+// External JS: encrypted-api-key.js。survey/html-button-response/call-function を有効にします。
 // 条件ごとのAIへの指示と生成設定を、このファイルでまとめます。
 const PROMPTS = {
   prompt_a: "あなたは文章改善を支援するAIです。対象文章の改善点と具体的な改善案（書き換え例を含む）を直接示してください。日本語で簡潔に。",
@@ -13,25 +12,23 @@ const CONDITIONS = [
   { condition: "manual" }
 ];
 
-// 入力欄と提出欄を読みやすく整えます。
+// Survey 4 の画面を読みやすく整えます。
 const experimentStyle = document.createElement("style");
 experimentStyle.textContent = `
-  .jspsych-content { width: calc(100% - 2rem); max-width: 48rem; }
+  .jspsych-content { box-sizing: border-box; width: calc(100% - 2rem); max-width: 48rem; }
   .sd-root-modern { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Yu Gothic", "Meiryo", sans-serif; }
-  .jspsych-body { box-sizing: border-box; width: 100%; max-width: 48rem; padding: 1rem; }
-  .jspsych-page, .sd-page__row { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; }
-  .jspsych-question-root { box-sizing: border-box; width: 100%; max-width: 100%; overflow: visible; }
+  .sd-body { box-sizing: border-box; width: 100%; max-width: 48rem; padding: 1rem; }
+  .sd-page__row { box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; }
   .sd-element__title { line-height: 1.4; }
   .sd-input { font-size: 1rem; line-height: 1.5; }
   .sd-input--readonly { background-color: #f3f5f7; }
-  textarea.sd-input { min-height: 6rem; }
-  .jspsych-nav-complete { min-height: 2.75rem; background-color: #23395d; border-color: #23395d; color: #fff; }
+  textarea.sd-input { min-height: 6rem; max-width: 100%; }
+  .sd-btn--action { min-height: 2.75rem; background-color: #23395d; border-color: #23395d; color: #fff; }
   @media (max-width: 600px) {
     .jspsych-content { width: calc(100% - 1rem); }
-    .jspsych-body { padding: 0.75rem; }
+    .sd-body { padding: 0.75rem; }
   }
 `;
-document.head.append(experimentStyle);
 
 // 実験終了時にAPIキーを消去し、担当者への連絡案内を表示します。
 const jsPsych = initJsPsych({ on_finish: () => {
@@ -54,6 +51,7 @@ const consent = {
 // on_finishで一時変数へ移した後、data.responseごと削除します。
 const passwordEntry = {
   type: jsPsychSurvey,
+  min_width: "0px",
   data: { feedback_phase: "password_entry" },
   survey_json: {
     showQuestionNumbers: "off", showCompletedPage: false, completeText: "開始",
@@ -84,6 +82,7 @@ const authentication = {
 // 入力した対象文章を、後続の生成・提出trialで使うsubmission列へ保存します。
 const input = {
   type: jsPsychSurvey,
+  min_width: "0px",
   data: { feedback_phase: "input" },
   survey_json: {
     showQuestionNumbers: "off", showCompletedPage: false, completeText: "次へ",
@@ -132,6 +131,7 @@ const generationFailure = {
 // AI条件とmanual条件が同じ提出欄を使い、manualでは空欄から入力します。
 const submission = {
   type: jsPsychSurvey,
+  min_width: "0px",
   data: { feedback_phase: "submission" },
   survey_json: {
     showQuestionNumbers: "off", showCompletedPage: false, completeText: "提出する",
@@ -232,11 +232,21 @@ timeline.push(authenticationTimeline);
 timeline.push(taskTimeline);
 timeline.push(sessionFinish);
 
-// GitHubの共通ライブラリを読み込んでから、実験を開始します。
+// 公式のSurvey CSSとGitHubの共通ライブラリを読み込んでから、実験を開始します。
+const surveyStylesheet = document.createElement("link");
+surveyStylesheet.rel = "stylesheet";
+surveyStylesheet.href = "https://unpkg.com/@jspsych/plugin-survey@4.0.0/css/survey.min.css";
 const feedbackUtilsScript = document.createElement("script");
 feedbackUtilsScript.src = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@1eb526cda0aad424f3efb4ddb1da926d099f5df1/dist/feedback-utils.js";
 feedbackUtilsScript.onload = () => jsPsych.run(timeline);
 feedbackUtilsScript.onerror = () => {
   document.body.textContent = "共通ライブラリを読み込めませんでした。ページを再読み込みしてください。";
 };
-document.head.append(feedbackUtilsScript);
+surveyStylesheet.onload = () => {
+  document.head.append(experimentStyle);
+  document.head.append(feedbackUtilsScript);
+};
+surveyStylesheet.onerror = () => {
+  document.body.textContent = "Surveyのスタイルを読み込めませんでした。ページを再読み込みしてください。";
+};
+document.head.append(surveyStylesheet);
