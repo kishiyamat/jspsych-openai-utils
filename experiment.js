@@ -33,8 +33,11 @@ experimentStyle.textContent = `
 `;
 document.head.append(experimentStyle);
 
-// 実験終了時に、共通ライブラリが保持しているAPIキーを消去します。
-const jsPsych = initJsPsych({ on_finish: () => FeedbackUtils.clearKey() });
+// 実験終了時にAPIキーを消去し、担当者への連絡案内を表示します。
+const jsPsych = initJsPsych({ on_finish: () => {
+  FeedbackUtils.clearKey();
+  jsPsych.getDisplayElement().textContent = "お疲れさまでした。実験担当者に連絡してください。";
+} });
 let password = null; // 認証trialへ渡した直後に消し、trial dataには保存しません。
 
 // 最初に同意を確認し、同意しない場合は後続のtrialを条件分岐で省きます。
