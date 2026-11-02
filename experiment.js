@@ -1,5 +1,5 @@
 // Cognition の Source code に貼り付ける jsPsych 7/8 の例。
-// External JS: feedback-utils.js、encrypted-api-key.js、survey 1.0.1。
+// External JS: encrypted-api-key.js、survey 1.0.1。
 // survey CSS も External CSS に登録し、html-button-response/call-function を有効にする。
 // 条件ごとのAIへの指示と生成設定を、このファイルでまとめます。
 const PROMPTS = {
@@ -198,10 +198,18 @@ const sessionFinish = {
   choices: ["終了"]
 };
 
-// 標準のjsPsych timelineへ、同意→認証→条件別課題→終了の順で登録して実行します。
+// 標準のjsPsych timelineへ、同意→認証→条件別課題→終了の順で登録します。
 const timeline = [];
 timeline.push(consent);
 timeline.push(authenticationTimeline);
 timeline.push(taskTimeline);
 timeline.push(sessionFinish);
-jsPsych.run(timeline);
+
+// GitHubの共通ライブラリを読み込んでから、実験を開始します。
+const feedbackUtilsScript = document.createElement("script");
+feedbackUtilsScript.src = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@1eb526cda0aad424f3efb4ddb1da926d099f5df1/dist/feedback-utils.js";
+feedbackUtilsScript.onload = () => jsPsych.run(timeline);
+feedbackUtilsScript.onerror = () => {
+  document.body.textContent = "共通ライブラリを読み込めませんでした。ページを再読み込みしてください。";
+};
+document.head.append(feedbackUtilsScript);
