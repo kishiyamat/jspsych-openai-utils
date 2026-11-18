@@ -33,6 +33,19 @@ async function main() {
   assert.equal(context.requestBody.input, "raw text");
   assert.equal(context.requestBody.instructions, "prompt");
   assert.equal("apiKey" in context.requestBody, false);
+  const multimodalInput = [{
+    role: "user",
+    content: [
+      { type: "input_text", text: "Teacher feedback" },
+      { type: "input_image", image_url: "data:image/jpeg;base64,YWJj" }
+    ]
+  }];
+  const generatedImage = await call("generate", {
+    model: "fake-model", systemPrompt: "prompt", input: multimodalInput
+  });
+  assert.equal(generatedImage.ai_feedback, "safe result");
+  assert.deepEqual(context.requestBody.input, multimodalInput);
+  assert.equal(context.requestBody.store, false);
   assert.equal(JSON.stringify(generated).includes(plaintext), false);
   context.testApi.clearKey();
   const cleared = await call("generate", { model: "fake-model", systemPrompt: "prompt", text: "raw text" });

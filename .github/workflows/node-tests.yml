@@ -1,0 +1,25 @@
+name: Node tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run utility tests
+        run: |
+          for test in tests/*.test.js; do
+            node "$test"
+          done
+      - name: Verify generated bundle is committed
+        run: git diff --exit-code -- dist/feedback-utils.js
