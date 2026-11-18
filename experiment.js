@@ -237,7 +237,7 @@ const surveyStylesheet = document.createElement("link");
 surveyStylesheet.rel = "stylesheet";
 surveyStylesheet.href = "https://unpkg.com/@jspsych/plugin-survey@4.0.0/css/survey.min.css";
 const feedbackUtilsScript = document.createElement("script");
-feedbackUtilsScript.src = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@1eb526cda0aad424f3efb4ddb1da926d099f5df1/dist/feedback-utils.js";
+feedbackUtilsScript.src = "https://cdn.jsdelivr.net/gh/kishiyamat/jspsych-openai-utils@6a8f220e8327748c55b1cd85a1af8ed63e60dbdb/dist/feedback-utils.js";
 feedbackUtilsScript.onload = () => jsPsych.run(timeline);
 feedbackUtilsScript.onerror = () => {
   document.body.textContent = "共通ライブラリを読み込めませんでした。ページを再読み込みしてください。";
