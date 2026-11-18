@@ -117,7 +117,32 @@ async function main() {
   assert.equal(quota.delays.length, 0);
   assert.equal(JSON.stringify(quotaResult.result).includes("private quota detail"), false);
 
-  console.log("Retry-After, automatic retry history, five-call ceiling, non-retryable quota, and safe callback checks passed");
+  // Retried multimodal requests must carry the same structured input each time.
+  const structuredInput = [{
+    role: "user",
+    content: [
+      { type: "input_text", text: "read the image" },
+      { type: "input_image", image_url: "data:image/png;base64,YWJj" }
+    ]
+  }];
+  const multimodalBodies = [];
+  const multimodal = createHarness(async (_url, options) => {
+    multimodalBodies.push(JSON.parse(options.body));
+    if (multimodalBodies.length === 1) {
+      return new Response(JSON.stringify({ error: { code: "server_error" } }), {
+        status: 503, headers: { "content-type": "application/json", "retry-after": "0" }
+      });
+    }
+    return safeResponse();
+  });
+  const multimodalResult = await new Promise(resolve => multimodal.run({
+    model: "fake-model", systemPrompt: "prompt", input: structuredInput
+  }, resolve));
+  assert.equal(multimodalBodies.length, 2);
+  assert.deepEqual(multimodalBodies.map(body => body.input), [structuredInput, structuredInput]);
+  assert.equal(multimodalResult.ai_feedback, "safe result");
+
+  console.log("Retry-After, automatic retry history, five-call ceiling, non-retryable quota, structured input, and safe callback checks passed");
 }
 
 main().catch(error => { console.error(error); process.exitCode = 1; });

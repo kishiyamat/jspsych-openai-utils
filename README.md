@@ -26,7 +26,7 @@ Cognition's jsPsych integration saves each trial. Actual task registration and d
 `window.FeedbackUtils` exposes three methods:
 
 - `decryptApiKey(encrypted, password, done)` decrypts the key and keeps it private inside the utility. `done` receives only `authentication_succeeded` and `authentication_error`.
-- `generate(options, done)` sends a Responses API request using that private key. It retries retryable failures up to five calls, stopping on success or a non-retryable error. `done` receives the response fields, total API call count, and a safe `api_attempts` history; neither the key nor raw error messages are returned.
+- `generate(options, done)` sends a Responses API request using that private key. Pass `text` for existing text-only requests or `input` for a string or a structured Responses API input array (including `input_image`); when both are present, `input` takes precedence. It retries retryable failures up to five calls, stopping on success or a non-retryable error. `done` receives the response fields, total API call count, and a safe `api_attempts` history; neither the key nor raw error messages are returned.
 - `clearKey()` releases the private key.
 
 Both methods call `done` when processing finishes; use the jsPsych `call-function` plugin for asynchronous trials. For example:
@@ -51,6 +51,27 @@ const generation = {
   }, done)
 };
 ```
+
+### Optional image input
+
+For a fixed experiment stimulus, load the image from Cognition's Stimuli directory and convert it to a data URL. The browser utility accepts that data URL in the Responses API's native input shape without intercepting or replacing `window.fetch`:
+
+```js
+FeedbackUtils.generate({
+  model: "gpt-6-luna",
+  systemPrompt: "Transcribe and provide feedback.",
+  input: [{
+    role: "user",
+    content: [
+      { type: "input_text", text: "Transcribe the attached image." },
+      { type: "input_image", image_url: imageDataUrl }
+    ]
+  }],
+  maxOutputTokens: 8000
+}, done);
+```
+
+Image loading and data-URL conversion remain the experiment's responsibility; this shared utility handles only the OpenAI transport. For fixed texts that do not require visual inspection, pre-transcribed `text` input avoids OCR uncertainty and image costs.
 
 The experiment must remove the password from trial data and must never put the password or decrypted API key in browser storage or logs. Keep submitted text unchanged when sending it. The model and generation settings must be supported together by the selected model.
 

@@ -18,6 +18,32 @@ async function main() {
   assert.equal(body.instructions, "prompt");
   assert.equal(body.store, false);
   assert.equal("apiKey" in body, false);
+
+  const imageInput = [{
+    role: "user",
+    content: [
+      { type: "input_text", text: "Read the attached manuscript" },
+      { type: "input_image", image_url: "data:image/png;base64,YWJj" }
+    ]
+  }];
+  const imageResult = await generate({
+    apiKey: "sk-fake-never-valid",
+    model: "fake-model",
+    systemPrompt: "prompt",
+    text: "legacy text must not be sent",
+    input: imageInput
+  });
+  assert.equal(imageResult.text, "safe result");
+  const imageBody = JSON.parse(request.options.body);
+  assert.deepEqual(imageBody.input, imageInput);
+  assert.equal(imageBody.instructions, "prompt");
+  assert.equal(imageBody.store, false);
+  assert.equal("text" in imageBody, false);
+  assert.equal("apiKey" in imageBody, false);
+
+  // The optional input can also carry ordinary text directly.
+  await generate({ apiKey: "sk-fake-never-valid", model: "fake-model", systemPrompt: "prompt", input: "direct input" });
+  assert.equal(JSON.parse(request.options.body).input, "direct input");
   assert.equal(classifyError(Object.assign(new Error("safe"), { status: 503, code: "server_error" })).retryable, true);
   assert.equal(classifyError(Object.assign(new Error("safe"), { status: 429, code: "credit_balance_exhausted" })).retryable, false);
   assert.equal(classifyError(Object.assign(new Error("safe"), { status: 401, code: "sk-secret-shaped" })).code, "generation_failed");

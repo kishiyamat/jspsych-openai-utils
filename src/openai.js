@@ -1,9 +1,10 @@
 // OpenAI Responses API. No experiment-specific prompts or keys.
-async function requestFeedback({ apiKey, model = "gpt-5-mini", systemPrompt, text,
+// Pass `input` for structured multimodal messages, or `text` for legacy text-only calls.
+async function requestFeedback({ apiKey, model = "gpt-5-mini", systemPrompt, text, input = null,
                           reasoningEffort = null, temperature = null,
                           maxOutputTokens = 1000, timeoutMs = 90000 }) {
   const body = {
-    model, instructions: systemPrompt, input: text,
+    model, instructions: systemPrompt, input: input ?? text,
     max_output_tokens: maxOutputTokens, store: false
   };
   if (reasoningEffort !== null) body.reasoning = { effort: reasoningEffort };
